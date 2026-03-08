@@ -1,3 +1,5 @@
+import { icon, ICON_COLORS } from "./icons.ts";
+
 // ─── API Client ──────────────────────────────────
 
 const api = {
@@ -137,9 +139,38 @@ async function checkAuth(): Promise<void> {
   }
 }
 
+const PLATFORM_NAMES: Record<string, string> = {
+  twitter: "X (Twitter)",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  linkedin: "LinkedIn",
+  youtube: "YouTube",
+  mastodon: "Mastodon",
+  bluesky: "Bluesky",
+  tiktok: "TikTok",
+  pinterest: "Pinterest",
+  threads: "Threads",
+  reddit: "Reddit",
+};
+
 function showLogin() {
   show($("#login-screen"));
   hide($("#dashboard-screen"));
+
+  // Populate platform icons on the login screen
+  const container = $("#login-platforms");
+  if (container && !container.hasChildNodes()) {
+    const platforms = [
+      "twitter", "facebook", "instagram", "linkedin", "youtube",
+      "mastodon", "bluesky", "tiktok", "pinterest", "threads", "reddit",
+    ];
+    container.innerHTML = platforms
+      .map(
+        (p) =>
+          `<span title="${PLATFORM_NAMES[p] ?? p}">${icon(p, 20, ICON_COLORS[p] ?? "#fff")}</span>`,
+      )
+      .join("");
+  }
 }
 
 function showDashboard() {
@@ -160,19 +191,15 @@ function showDashboard() {
 
 // ─── Platform grid ───────────────────────────────
 
-const PLATFORM_ICONS: Record<string, string> = {
-  twitter: "𝕏",
-  facebook: "📘",
-  instagram: "📸",
-  linkedin: "💼",
-  youtube: "▶️",
-  mastodon: "🐘",
-  bluesky: "🦋",
-  tiktok: "🎵",
-  pinterest: "📌",
-  threads: "🧵",
-  reddit: "🤖",
-};
+/** Render a platform icon as inline SVG (16px, white fill for dark theme). */
+function platformIcon(platform: string, size = 16): string {
+  return icon(platform, size, "#fff");
+}
+
+/** Render a platform icon with its brand colour. */
+function platformIconColored(platform: string, size = 16): string {
+  return icon(platform, size, ICON_COLORS[platform] ?? "#fff");
+}
 
 let platformsCache: PlatformInfo[] = [];
 
@@ -193,7 +220,7 @@ function renderPlatforms(): void {
     .map(
       (p) => `
     <div class="platform-card ${p.configured ? "configured" : "unconfigured"}">
-      <div class="name">${PLATFORM_ICONS[p.platform] ?? "🌐"} ${escapeHtml(p.displayName)}</div>
+      <div class="name">${platformIconColored(p.platform, 18)} ${escapeHtml(p.displayName)}</div>
       <div class="status">${p.configured ? "✓ Connected" : "Not configured"}</div>
       ${
         p.configured
@@ -382,7 +409,7 @@ function renderPublications(pubs: Publication[]): void {
               `<span class="pub-platform-badge ${p.status}" title="${escapeHtml(
                 p.error ?? p.platformUrl ?? "",
               )}">
-              ${PLATFORM_ICONS[p.platform] ?? ""} ${p.platform} · ${p.status}
+              ${platformIcon(p.platform, 12)} ${p.platform} · ${p.status}
             </span>`,
           )
           .join("")}

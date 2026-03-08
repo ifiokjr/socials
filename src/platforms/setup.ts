@@ -4,6 +4,7 @@ import type { Platform, PlatformSetupField } from "../types.ts";
 export interface PlatformSetupInfo {
   platform: Platform;
   displayName: string;
+  /** Simple Icons slug used by the frontend to render the SVG. */
   icon: string;
   description: string;
   docsUrl: string;
@@ -14,7 +15,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "twitter",
     displayName: "X (Twitter)",
-    icon: "𝕏",
+    icon: "twitter",
     description: "Post tweets with images and video. Requires a Twitter Developer account.",
     docsUrl: "https://developer.x.com/en/docs/authentication/oauth-1-0a",
     fields: [
@@ -27,7 +28,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "facebook",
     displayName: "Facebook",
-    icon: "📘",
+    icon: "facebook",
     description: "Post to a Facebook Page. Requires a Meta developer app with page permissions.",
     docsUrl: "https://developers.facebook.com/docs/pages-api/",
     fields: [
@@ -46,7 +47,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "instagram",
     displayName: "Instagram",
-    icon: "📸",
+    icon: "instagram",
     description:
       "Post images, carousels, and Reels. Uses the same Meta app as Facebook — fill in the Instagram Business Account ID in Facebook setup.",
     docsUrl: "https://developers.facebook.com/docs/instagram-platform/",
@@ -61,7 +62,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "linkedin",
     displayName: "LinkedIn",
-    icon: "💼",
+    icon: "linkedin",
     description: "Share posts and articles to your LinkedIn profile.",
     docsUrl: "https://learn.microsoft.com/en-us/linkedin/shared/authentication/",
     fields: [
@@ -79,7 +80,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "youtube",
     displayName: "YouTube",
-    icon: "▶️",
+    icon: "youtube",
     description: "Upload videos to your YouTube channel.",
     docsUrl: "https://developers.google.com/youtube/v3/docs/videos/insert",
     fields: [
@@ -92,7 +93,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "mastodon",
     displayName: "Mastodon",
-    icon: "🐘",
+    icon: "mastodon",
     description: "Post to any Mastodon instance.",
     docsUrl: "https://docs.joinmastodon.org/client/token/",
     fields: [
@@ -108,7 +109,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "bluesky",
     displayName: "Bluesky",
-    icon: "🦋",
+    icon: "bluesky",
     description: "Post to Bluesky via the AT Protocol.",
     docsUrl: "https://bsky.app/settings/app-passwords",
     fields: [
@@ -124,7 +125,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "tiktok",
     displayName: "TikTok",
-    icon: "🎵",
+    icon: "tiktok",
     description: "Publish videos and photo carousels to TikTok.",
     docsUrl: "https://developers.tiktok.com/doc/content-posting-api-get-started",
     fields: [
@@ -135,7 +136,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "pinterest",
     displayName: "Pinterest",
-    icon: "📌",
+    icon: "pinterest",
     description: "Create Pins on a Pinterest board.",
     docsUrl: "https://developers.pinterest.com/docs/api/v5/",
     fields: [
@@ -146,7 +147,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "threads",
     displayName: "Threads",
-    icon: "🧵",
+    icon: "threads",
     description: "Post to Threads (Meta).",
     docsUrl: "https://developers.facebook.com/docs/threads/",
     fields: [
@@ -157,7 +158,7 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
   {
     platform: "reddit",
     displayName: "Reddit",
-    icon: "🤖",
+    icon: "reddit",
     description: "Submit posts to a subreddit.",
     docsUrl: "https://www.reddit.com/dev/api/",
     fields: [

@@ -25,10 +25,12 @@ test.describe("Login gate", () => {
     );
   });
 
-  test("login screen shows all 11 platform icons", async ({ page }) => {
+  test("login screen shows all 11 platform icons as SVGs", async ({ page }) => {
     await page.goto("/");
-    const icons = page.locator(".login-platforms span");
-    await expect(icons).toHaveCount(11);
+    await expect(page.locator("#login-screen")).toBeVisible();
+    // Icons rendered by JS from Simple Icons SVG paths
+    const svgs = page.locator("#login-platforms svg");
+    await expect(svgs).toHaveCount(11);
   });
 
   test("login button links to /auth/login", async ({ page }) => {
