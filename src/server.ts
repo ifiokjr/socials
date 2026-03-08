@@ -1,0 +1,329 @@
+import { Hono } from "@hono/hono";
+import { cors } from "@hono/hono/cors";
+import { serveStatic } from "@hono/hono/deno";
+import type { AppConfig } from "./config.ts";
+import type { Platform } from "./types.ts";
+import { Store, type UserProfile } from "./db/store.ts";
+import {
+  buildAuthorizeUrl,
+  encrypt,
+  exchangeCode,
+  fetchGitHubUser,
+  SessionStore,
+  type Session,
+} from "./auth/mod.ts";
+import { PublishEngine } from "./publisher/engine.ts";
+import { ALL_PLATFORMS, PLATFORM_SETUP, getSetupInfo } from "./platforms/mod.ts";
+
+// ── Hono env type for typed context ──────────────
+
+type Env = {
+  Variables: {
+    session: Session;
+    userId: string;
+  };
+};
+
+export function createApp(
+  config: AppConfig,
+  existingStore?: Store,
+): { app: Hono<Env>; store: Store } {
+  const app = new Hono<Env>();
+  const store = existingStore ?? new Store();
+
+  app.use("*", cors());
+
+  // ── Auth routes (no session required) ──────────
+
+  app.get("/api/health", (c) => {
+    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  /** Redirect to GitHub OAuth */
+  app.get("/auth/login", (c) => {
+    const state = crypto.randomUUID();
+    const url = buildAuthorizeUrl(
+      {
+        clientId: config.github.clientId,
+        clientSecret: config.github.clientSecret,
+        redirectUri: `${config.server.baseUrl}/auth/callback`,
+      },
+      state,
+    );
+    return c.redirect(url);
+  });
+
+  /** GitHub OAuth callback */
+  app.get("/auth/callback", async (c) => {
+    const code = c.req.query("code");
+    if (!code) return c.json({ error: "Missing code" }, 400);
+
+    try {
+      const tokenRes = await exchangeCode(
+        {
+          clientId: config.github.clientId,
+          clientSecret: config.github.clientSecret,
+          redirectUri: `${config.server.baseUrl}/auth/callback`,
+        },
+        code,
+      );
+
+      const ghUser = await fetchGitHubUser(tokenRes.access_token);
+      const userId = String(ghUser.id);
+
+      // Upsert user profile
+      const profile: UserProfile = {
+        id: userId,
+        githubId: ghUser.id,
+        login: ghUser.login,
+        name: ghUser.name ?? ghUser.login,
+        avatarUrl: ghUser.avatar_url,
+        email: ghUser.email,
+        createdAt: new Date().toISOString(),
+      };
+      const existing = await store.getUser(userId);
+      if (existing) profile.createdAt = existing.createdAt;
+      await store.saveUser(profile);
+
+      // Create session
+      const sessions = new SessionStore(store.kv);
+      const sid = await sessions.create({
+        userId,
+        githubLogin: ghUser.login,
+        githubToken: tokenRes.access_token,
+        avatarUrl: ghUser.avatar_url,
+        name: ghUser.name ?? ghUser.login,
+        createdAt: new Date().toISOString(),
+      });
+
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: "/",
+          "Set-Cookie": SessionStore.setCookie(sid, config.server.isProduction),
+        },
+      });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  app.post("/auth/logout", async (c) => {
+    const sid = SessionStore.extractId(c.req.header("Cookie"));
+    if (sid) {
+      const sessions = new SessionStore(store.kv);
+      await sessions.destroy(sid);
+    }
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/",
+        "Set-Cookie": SessionStore.clearCookie(),
+      },
+    });
+  });
+
+  /** Check current session (unauthenticated-safe). */
+  app.get("/api/me", async (c) => {
+    const sid = SessionStore.extractId(c.req.header("Cookie"));
+    if (!sid) return c.json({ user: null });
+
+    const sessions = new SessionStore(store.kv);
+    const session = await sessions.get(sid);
+    if (!session) return c.json({ user: null });
+
+    const profile = await store.getUser(session.userId);
+    return c.json({
+      user: profile
+        ? {
+          id: profile.id,
+          login: profile.login,
+          name: profile.name,
+          avatarUrl: profile.avatarUrl,
+        }
+        : null,
+    });
+  });
+
+  // ── Auth middleware for /api/* (except health & me) ─
+
+  app.use("/api/*", async (c, next) => {
+    // Skip auth for health and me
+    if (c.req.path === "/api/health" || c.req.path === "/api/me") {
+      return next();
+    }
+
+    const sid = SessionStore.extractId(c.req.header("Cookie"));
+    if (!sid) return c.json({ error: "Not authenticated" }, 401);
+
+    const sessions = new SessionStore(store.kv);
+    const session = await sessions.get(sid);
+    if (!session) return c.json({ error: "Session expired" }, 401);
+
+    c.set("session", session);
+    c.set("userId", session.userId);
+    return next();
+  });
+
+  // ── Platform setup wizard ──────────────────────
+
+  /** List all platforms with setup info + user's config status. */
+  app.get("/api/platforms", async (c) => {
+    const userId = c.get("userId");
+    const configured = await store.listConfiguredPlatforms(userId);
+
+    const platforms = PLATFORM_SETUP.map((s) => ({
+      ...s,
+      configured: configured.includes(s.platform),
+    }));
+
+    return c.json({ platforms });
+  });
+
+  /** Get setup wizard fields for a single platform. */
+  app.get("/api/platforms/:platform/setup", (c) => {
+    const info = getSetupInfo(c.req.param("platform") as Platform);
+    if (!info) return c.json({ error: "Unknown platform" }, 404);
+    return c.json(info);
+  });
+
+  /** Save credentials for a platform (encrypt + store). */
+  app.post("/api/platforms/:platform/setup", async (c) => {
+    const platform = c.req.param("platform") as Platform;
+    if (!ALL_PLATFORMS.includes(platform)) {
+      return c.json({ error: "Unknown platform" }, 404);
+    }
+
+    const userId = c.get("userId");
+    const body = await c.req.json();
+
+    // Validate all required fields are present
+    const info = getSetupInfo(platform)!;
+    const missing = info.fields.filter((f) => !body[f.key]);
+    if (missing.length > 0) {
+      return c.json({
+        error: `Missing fields: ${missing.map((f) => f.label).join(", ")}`,
+      }, 400);
+    }
+
+    // Encrypt and store
+    const blob = await encrypt(
+      JSON.stringify(body),
+      config.encryptionSecret,
+      userId,
+    );
+    await store.setCredentials(userId, platform, blob);
+
+    return c.json({ success: true, platform });
+  });
+
+  /** Remove credentials for a platform. */
+  app.delete("/api/platforms/:platform", async (c) => {
+    const platform = c.req.param("platform") as Platform;
+    const userId = c.get("userId");
+    await store.deleteCredentials(userId, platform);
+    return c.json({ success: true });
+  });
+
+  // ── S3 Storage config ─────────────────────────
+
+  app.get("/api/storage", async (c) => {
+    const userId = c.get("userId");
+    const blob = await store.getStorageConfig(userId);
+    return c.json({ configured: !!blob });
+  });
+
+  app.post("/api/storage", async (c) => {
+    const userId = c.get("userId");
+    const body = await c.req.json();
+
+    const required = ["endpoint", "region", "bucket", "accessKeyId", "secretAccessKey"];
+    const missing = required.filter((k) => !body[k]);
+    if (missing.length > 0) {
+      return c.json({ error: `Missing: ${missing.join(", ")}` }, 400);
+    }
+
+    const blob = await encrypt(
+      JSON.stringify(body),
+      config.encryptionSecret,
+      userId,
+    );
+    await store.setStorageConfig(userId, blob);
+    return c.json({ success: true });
+  });
+
+  app.delete("/api/storage", async (c) => {
+    const userId = c.get("userId");
+    await store.deleteStorageConfig(userId);
+    return c.json({ success: true });
+  });
+
+  // ── Publications ──────────────────────────────
+
+  app.get("/api/publications", async (c) => {
+    const pubs = await store.getAll(c.get("userId"));
+    return c.json({ publications: pubs });
+  });
+
+  app.get("/api/publications/:id", async (c) => {
+    const pub = await store.get(c.get("userId"), c.req.param("id"));
+    if (!pub) return c.json({ error: "Not found" }, 404);
+    return c.json(pub);
+  });
+
+  app.post("/api/publish", async (c) => {
+    const body = await c.req.json();
+    const gistId = body.gistId;
+    if (!gistId || typeof gistId !== "string") {
+      return c.json({ error: "gistId is required" }, 400);
+    }
+
+    const session = c.get("session");
+    const engine = new PublishEngine({
+      githubToken: session.githubToken,
+      userId: session.userId,
+      store,
+      encryptionSecret: config.encryptionSecret,
+    });
+
+    try {
+      const publication = await engine.processGist(gistId);
+      return c.json({ publication });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  app.post("/api/publications/:id/retry", async (c) => {
+    const pub = await store.get(c.get("userId"), c.req.param("id"));
+    if (!pub) return c.json({ error: "Not found" }, 404);
+
+    const session = c.get("session");
+    const engine = new PublishEngine({
+      githubToken: session.githubToken,
+      userId: session.userId,
+      store,
+      encryptionSecret: config.encryptionSecret,
+    });
+
+    try {
+      const updated = await engine.processGist(pub.gistId);
+      return c.json({ publication: updated });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  app.delete("/api/publications/:id", async (c) => {
+    const deleted = await store.delete(c.get("userId"), c.req.param("id"));
+    if (!deleted) return c.json({ error: "Not found" }, 404);
+    return c.json({ success: true });
+  });
+
+  // ── Static files ──────────────────────────────
+
+  app.use("/*", serveStatic({ root: "./dist" }));
+  app.use("/", serveStatic({ root: "./dist", path: "/index.html" }));
+
+  return { app, store };
+}

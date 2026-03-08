@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Socials — Publish everywhere</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ─── Login screen (shown when unauthenticated) ─── -->
+    <div id="login-screen" class="screen" hidden>
+      <div class="login-container">
+        <div class="login-hero">
+          <span class="login-icon">📡</span>
+          <h1>Socials</h1>
+          <p class="login-tagline">Write once, publish everywhere.</p>
+          <p class="login-desc">
+            Author content as GitHub Gists and publish to 11 social networks with a single click.
+          </p>
+        </div>
+
+        <div class="login-platforms">
+          <span title="X (Twitter)">𝕏</span>
+          <span title="Facebook">📘</span>
+          <span title="Instagram">📸</span>
+          <span title="LinkedIn">💼</span>
+          <span title="YouTube">▶️</span>
+          <span title="Mastodon">🐘</span>
+          <span title="Bluesky">🦋</span>
+          <span title="TikTok">🎵</span>
+          <span title="Pinterest">📌</span>
+          <span title="Threads">🧵</span>
+          <span title="Reddit">🤖</span>
+        </div>
+
+        <a href="/auth/login" class="login-btn" id="login-btn">
+          <svg class="github-icon" viewBox="0 0 16 16" width="20" height="20" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          Sign in with GitHub
+        </a>
+
+        <p class="login-footer">
+          Your GitHub account provides Gist access. Platform credentials are encrypted at rest.
+        </p>
+      </div>
+    </div>
+
+    <!-- ─── Dashboard (shown when authenticated) ─── -->
+    <div id="dashboard-screen" class="screen" hidden>
+      <header>
+        <div class="header-row">
+          <h1>📡 Socials</h1>
+          <div class="user-menu" id="user-menu">
+            <img id="user-avatar" class="user-avatar" src="" alt="" />
+            <span id="user-name" class="user-name"></span>
+            <button id="logout-btn" class="btn-secondary btn-small">Sign out</button>
+          </div>
+        </div>
+        <p class="subtitle">Gist → Everywhere</p>
+      </header>
+
+      <main>
+        <!-- Publish form -->
+        <section class="card" id="publish-section">
+          <h2>Publish a Gist</h2>
+          <form id="publish-form">
+            <div class="form-group">
+              <label for="gist-id">Gist ID or URL</label>
+              <input
+                type="text"
+                id="gist-id"
+                name="gistId"
+                placeholder="e.g. abc123def456 or https://gist.github.com/user/abc123"
+                required
+              />
+            </div>
+            <button type="submit" id="publish-btn">🚀 Publish</button>
+          </form>
+          <div id="publish-result" class="result" hidden></div>
+        </section>
+
+        <!-- Platform status -->
+        <section class="card" id="platforms-section">
+          <h2>Platforms</h2>
+          <div id="platforms-grid" class="platforms-grid">
+            <p class="loading">Loading platforms…</p>
+          </div>
+        </section>
+
+        <!-- Storage -->
+        <section class="card" id="storage-section">
+          <h2>Media Storage</h2>
+          <p id="storage-status" class="loading">Checking…</p>
+          <button id="storage-setup-btn" class="btn-secondary" hidden>Configure S3 Storage</button>
+        </section>
+
+        <!-- Publications -->
+        <section class="card" id="publications-section">
+          <h2>Publications</h2>
+          <div class="actions">
+            <button id="refresh-btn" class="btn-secondary">🔄 Refresh</button>
+          </div>
+          <div id="publications-list">
+            <p class="loading">Loading publications…</p>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <p>Socials &mdash; Publish once, post everywhere.</p>
+      </footer>
+    </div>
+
+    <!-- ─── Loading spinner (shown during auth check) ─── -->
+    <div id="loading-screen" class="screen">
+      <div class="loading-container">
+        <span class="spinner"></span>
+        <p>Loading…</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/app.ts"></script>
+</body>
+</html>
