@@ -56,6 +56,22 @@ Deno.test("GET /api/me returns null user and app defaults without session", asyn
   store.close();
 });
 
+Deno.test("GET /api/me returns user defaults when preferences exist", async () => {
+  const { app, store } = await setup();
+  const { cookie, userId } = await withSession(store);
+
+  await store.setPreferences(userId, { defaultPlatforms: ["bluesky"] });
+
+  const res = await app.request("/api/me", {
+    headers: { Cookie: cookie },
+  });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.defaults.defaultPlatforms, ["bluesky"]);
+
+  store.close();
+});
+
 // ── Auth required ───────────────────────────────
 
 Deno.test("GET /api/publications returns 401 without session", async () => {

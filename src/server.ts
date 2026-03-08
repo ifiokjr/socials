@@ -8,8 +8,8 @@ import {
   encrypt,
   exchangeCode,
   fetchGitHubUser,
-  SessionStore,
   type Session,
+  SessionStore,
 } from "./auth/mod.ts";
 import { PublishEngine } from "./publisher/engine.ts";
 import { ALL_PLATFORMS, getSetupInfo, PLATFORM_SETUP } from "./platforms/mod.ts";
@@ -36,6 +36,11 @@ export function createApp(
 ): { app: Hono<Env>; store: Store } {
   const app = new Hono<Env>();
   const store = existingStore ?? new Store();
+
+  const getUserDefaultPlatforms = async (userId: string): Promise<Platform[]> => {
+    const stored = await store.getPreferences(userId);
+    return stored?.defaultPlatforms ?? config.defaults.publishPlatforms;
+  };
 
   // ── Security headers ───────────────────────────
 
@@ -183,6 +188,7 @@ export function createApp(
     }
 
     const profile = await store.getUser(session.userId);
+    const userDefaults = await getUserDefaultPlatforms(session.userId);
     return c.json({
       user: profile
         ? {
@@ -192,7 +198,7 @@ export function createApp(
           avatarUrl: profile.avatarUrl,
         }
         : null,
-      defaults: buildUserPreferences(config.defaults.publishPlatforms),
+      defaults: buildUserPreferences(userDefaults),
     });
   });
 
@@ -317,9 +323,8 @@ export function createApp(
 
   app.get("/api/preferences", async (c) => {
     const userId = c.get("userId");
-    const stored = await store.getPreferences(userId);
     const preferences: UserPreferences = {
-      defaultPlatforms: stored?.defaultPlatforms ?? config.defaults.publishPlatforms,
+      defaultPlatforms: await getUserDefaultPlatforms(userId),
     };
     return c.json({ preferences });
   });
@@ -360,9 +365,7 @@ export function createApp(
     const client = new GistClient({ token: session.githubToken });
     const limitParam = c.req.query("limit");
     const parsedLimit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
-    const limit = Number.isFinite(parsedLimit)
-      ? Math.max(1, Math.min(parsedLimit!, 50))
-      : 10;
+    const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit!, 50)) : 10;
 
     try {
       const [gists, recentFromStore] = await Promise.all([
@@ -429,7 +432,7 @@ export function createApp(
 
     try {
       const publication = await engine.processGist(gistId, {
-        defaultPlatforms: config.defaults.publishPlatforms,
+        defaultPlatforms: await getUserDefaultPlatforms(session.userId),
       });
       return c.json({ publication });
     } catch (err) {
@@ -451,7 +454,7 @@ export function createApp(
 
     try {
       const updated = await engine.processGist(pub.gistId, {
-        defaultPlatforms: config.defaults.publishPlatforms,
+        defaultPlatforms: await getUserDefaultPlatforms(session.userId),
       });
       return c.json({ publication: updated });
     } catch (err) {
