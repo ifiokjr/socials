@@ -3,11 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="description" content="Write once, publish everywhere." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Socials" />
     <title>Socials — Publish everywhere</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>"
-    />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -245,6 +249,91 @@
                 </div>
               </form>
               <div id="publish-result" class="mt-4 rounded-lg px-4 py-3 text-sm" hidden></div>
+            </section>
+
+            <!-- Install app -->
+            <section class="glass-card p-6" id="install-section">
+              <div class="flex items-center justify-between gap-3 mb-3">
+                <h2
+                  class="text-sm font-semibold uppercase tracking-widest text-surface-400 light:text-surface-500"
+                >
+                  Install App
+                </h2>
+                <span id="install-app-state" class="pwa-install-state">Checking…</span>
+              </div>
+              <p id="install-app-hint" class="pwa-cta-copy">
+                Install for a faster app-like experience and automatic updates on restart.
+              </p>
+              <div class="pwa-cta-actions">
+                <button
+                  id="install-app-btn"
+                  hidden
+                  class="rounded-lg bg-accent hover:bg-accent-hover text-white font-semibold px-4 py-2 text-xs transition-colors"
+                >
+                  Install app
+                </button>
+              </div>
+            </section>
+
+            <!-- Notifications -->
+            <section class="glass-card p-6" id="notifications-section">
+              <div class="flex items-center justify-between gap-3 mb-4">
+                <h2
+                  class="text-sm font-semibold uppercase tracking-widest text-surface-400 light:text-surface-500"
+                >
+                  Notifications
+                </h2>
+                <button
+                  id="notifications-enable-btn"
+                  class="rounded-lg bg-accent hover:bg-accent-hover text-white font-semibold px-4 py-2 text-xs transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  Enable notifications
+                </button>
+              </div>
+              <div id="notifications-soft-ask" class="notification-soft-ask" hidden>
+                <p class="text-sm text-surface-200 light:text-surface-700">
+                  Stay in the loop with publish results and retry reminders. We’ll only ask your
+                  browser after you confirm.
+                </p>
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button
+                    id="notifications-soft-ask-allow"
+                    class="rounded-lg bg-accent hover:bg-accent-hover text-white font-semibold px-4 py-2 text-xs transition-colors"
+                  >
+                    Continue
+                  </button>
+                  <button
+                    id="notifications-soft-ask-dismiss"
+                    class="rounded-lg border border-surface-700 light:border-surface-300 bg-surface-800 light:bg-surface-100 hover:bg-surface-700 light:hover:bg-surface-200 text-xs font-medium text-surface-300 light:text-surface-600 px-4 py-2 transition-colors"
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+              <ol id="notifications-steps" class="notification-steps mt-3">
+                <li data-step="support">Checking browser support…</li>
+                <li data-step="permission">Waiting for your choice</li>
+                <li data-step="subscription">Subscription pending</li>
+              </ol>
+              <p id="notifications-status" class="mt-3 text-xs text-surface-500">
+                Notifications are optional and can be enabled any time.
+              </p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <button
+                  id="notifications-retry-btn"
+                  hidden
+                  class="rounded-lg border border-surface-700 light:border-surface-300 bg-surface-800 light:bg-surface-100 hover:bg-surface-700 light:hover:bg-surface-200 text-xs font-medium text-surface-300 light:text-surface-600 px-4 py-2 transition-colors"
+                >
+                  Retry setup
+                </button>
+                <button
+                  id="notifications-disable-btn"
+                  hidden
+                  class="rounded-lg border border-negative/30 bg-negative/10 hover:bg-negative/15 text-xs font-medium text-negative px-4 py-2 transition-colors"
+                >
+                  Disable notifications
+                </button>
+              </div>
             </section>
 
             <!-- Default publish platforms -->

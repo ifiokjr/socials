@@ -1,4 +1,5 @@
 import { icon, ICON_COLORS } from "./icons.ts";
+import { registerSW } from "virtual:pwa-register";
 
 // ─── API Client ──────────────────────────────────
 
@@ -102,6 +103,21 @@ interface RecentGist {
   platformStatuses?: RecentGistPlatformStatus[];
   ownerLogin?: string;
   markdownFiles?: string[];
+}
+
+interface PushSubscriptionPayload {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+interface BeforeInstallPromptEvent extends Event {
+  readonly platforms: string[];
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
 // ─── DOM Helpers ─────────────────────────────────
@@ -214,6 +230,7 @@ function toggleTheme() {
 let currentUser: User | null = null;
 let userDefaults: UserPreferences = { defaultPlatforms: [] };
 let userPreferences: UserPreferences = { defaultPlatforms: [] };
+let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 
 async function checkAuth(): Promise<void> {
   try {
@@ -511,6 +528,21 @@ function openSetupWizard(platform: string): void {
   });
 }
 
+// ─── Push notifications ──────────────────────────
+
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; i += 1) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+
+  return outputArray;
+}
+
 // ─── Storage ─────────────────────────────────────
 
 async function loadStorageStatus(): Promise<void> {
@@ -646,6 +678,280 @@ async function loadPublications(): Promise<void> {
   }
 }
 
+const NOTIFICATION_SOFT_ASK_KEY = "notifications.softAskDismissedAt";
+const NOTIFICATION_LAST_ERROR_KEY = "notifications.lastError";
+
+function isNotificationSupported(): boolean {
+  return "Notification" in globalThis && "serviceWorker" in navigator &&
+    "PushManager" in globalThis;
+}
+
+function getNotificationState(): NotificationPermission | "unsupported" {
+  if (!isNotificationSupported()) return "unsupported";
+  return Notification.permission;
+}
+
+function updateNotificationStep(
+  step: "support" | "permission" | "subscription",
+  state: "idle" | "active" | "done" | "error",
+  text?: string,
+): void {
+  const li = document.querySelector(`#notifications-steps [data-step="${step}"]`) as
+    | HTMLLIElement
+    | null;
+  if (!li) return;
+
+  li.classList.remove("is-active", "is-done", "is-error");
+  if (state === "active") li.classList.add("is-active");
+  if (state === "done") li.classList.add("is-done");
+  if (state === "error") li.classList.add("is-error");
+  if (text) li.textContent = text;
+}
+
+function setNotificationStatus(
+  message: string,
+  kind: "neutral" | "success" | "error" = "neutral",
+): void {
+  const el = document.getElementById("notifications-status");
+  if (!el) return;
+
+  el.className = `mt-3 text-xs ${
+    kind === "success" ? "text-positive" : kind === "error" ? "text-negative" : "text-surface-500"
+  }`;
+  el.textContent = message;
+}
+
+function encodeSubscription(sub: PushSubscription): PushSubscriptionPayload {
+  const json = sub.toJSON();
+  const p256dh = json.keys?.p256dh;
+  const auth = json.keys?.auth;
+
+  if (!json.endpoint || !p256dh || !auth) {
+    throw new Error("Missing push subscription keys from browser.");
+  }
+
+  return {
+    endpoint: json.endpoint,
+    expirationTime: json.expirationTime ?? null,
+    keys: { p256dh, auth },
+  };
+}
+
+function shouldShowSoftAskOnLoad(): boolean {
+  const dismissedAt = Number(localStorage.getItem(NOTIFICATION_SOFT_ASK_KEY) ?? 0);
+  if (!dismissedAt) return true;
+  const daysSinceDismiss = (Date.now() - dismissedAt) / (1000 * 60 * 60 * 24);
+  return daysSinceDismiss >= 7;
+}
+
+function renderNotificationPanel(): void {
+  const softAsk = document.getElementById("notifications-soft-ask") as HTMLDivElement | null;
+  const enableBtn = document.getElementById("notifications-enable-btn") as HTMLButtonElement | null;
+  const retryBtn = document.getElementById("notifications-retry-btn") as HTMLButtonElement | null;
+  const disableBtn = document.getElementById("notifications-disable-btn") as
+    | HTMLButtonElement
+    | null;
+  if (!softAsk || !enableBtn || !retryBtn || !disableBtn) return;
+
+  const state = getNotificationState();
+
+  updateNotificationStep(
+    "support",
+    state === "unsupported" ? "error" : "done",
+    state === "unsupported"
+      ? "This browser does not support web push notifications"
+      : "Browser supports notifications",
+  );
+
+  if (state === "unsupported") {
+    enableBtn.disabled = true;
+    hide(softAsk);
+    hide(retryBtn);
+    hide(disableBtn);
+    updateNotificationStep("permission", "idle", "Permission unavailable");
+    updateNotificationStep("subscription", "idle", "Subscription unavailable");
+    setNotificationStatus("Your browser does not support push notifications.", "error");
+    return;
+  }
+
+  const hasError = Boolean(localStorage.getItem(NOTIFICATION_LAST_ERROR_KEY));
+
+  if (state === "granted") {
+    enableBtn.textContent = "Enabled";
+    enableBtn.disabled = true;
+    hide(softAsk);
+    show(disableBtn);
+    if (hasError) show(retryBtn);
+    updateNotificationStep("permission", "done", "Permission granted");
+    updateNotificationStep(
+      "subscription",
+      hasError ? "error" : "done",
+      hasError ? "Subscription failed — retry needed" : "Subscription active",
+    );
+    setNotificationStatus(
+      hasError
+        ? "Permission granted, but subscription sync failed. Retry to complete setup."
+        : "Notifications are enabled for this browser.",
+      hasError ? "error" : "success",
+    );
+    return;
+  }
+
+  hide(disableBtn);
+  if (hasError) show(retryBtn);
+  enableBtn.disabled = false;
+  enableBtn.textContent = "Enable notifications";
+  updateNotificationStep(
+    "permission",
+    state === "denied" ? "error" : "active",
+    state === "denied" ? "Permission blocked in browser settings" : "Awaiting your consent",
+  );
+  updateNotificationStep("subscription", "idle", "Subscription pending");
+
+  if (state === "denied") {
+    hide(softAsk);
+    setNotificationStatus(
+      "Notifications are blocked. Change browser site settings to enable.",
+      "error",
+    );
+    return;
+  }
+
+  if (shouldShowSoftAskOnLoad()) show(softAsk);
+  else hide(softAsk);
+  setNotificationStatus("Notifications are optional and only enabled when you choose.");
+}
+
+async function ensurePushSubscription(): Promise<void> {
+  updateNotificationStep("subscription", "active", "Creating browser subscription…");
+  setNotificationStatus("Creating secure push subscription…");
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    let sub = await registration.pushManager.getSubscription();
+    if (!sub) {
+      const vapid = await api.get<{ publicKey: string }>("/push/public-key");
+      const key = vapid.publicKey;
+
+      sub = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      });
+    }
+
+    await api.post("/push/subscribe", encodeSubscription(sub));
+    localStorage.removeItem(NOTIFICATION_LAST_ERROR_KEY);
+    updateNotificationStep("subscription", "done", "Subscription active");
+    setNotificationStatus("Notifications are now enabled.", "success");
+  } catch (err) {
+    const message = (err as Error).message;
+    localStorage.setItem(NOTIFICATION_LAST_ERROR_KEY, message);
+    updateNotificationStep("subscription", "error", "Subscription failed");
+    setNotificationStatus(`Could not complete subscription: ${message}`, "error");
+    throw err;
+  }
+}
+
+function initNotifications(): void {
+  const softAsk = document.getElementById("notifications-soft-ask") as HTMLDivElement | null;
+  const enableBtn = document.getElementById("notifications-enable-btn") as HTMLButtonElement | null;
+  const allowSoftAskBtn = document.getElementById("notifications-soft-ask-allow") as
+    | HTMLButtonElement
+    | null;
+  const dismissSoftAskBtn = document.getElementById("notifications-soft-ask-dismiss") as
+    | HTMLButtonElement
+    | null;
+  const retryBtn = document.getElementById("notifications-retry-btn") as HTMLButtonElement | null;
+  const disableBtn = document.getElementById("notifications-disable-btn") as
+    | HTMLButtonElement
+    | null;
+  if (
+    !softAsk || !enableBtn || !allowSoftAskBtn || !dismissSoftAskBtn || !retryBtn || !disableBtn
+  ) return;
+
+  const requestNativePermission = async () => {
+    if (!isNotificationSupported()) {
+      renderNotificationPanel();
+      return;
+    }
+
+    if (Notification.permission === "granted") {
+      await ensurePushSubscription();
+      renderNotificationPanel();
+      return;
+    }
+
+    updateNotificationStep("permission", "active", "Browser permission request in progress…");
+    const permission = await Notification.requestPermission();
+
+    if (permission !== "granted") {
+      renderNotificationPanel();
+      return;
+    }
+
+    await ensurePushSubscription();
+    renderNotificationPanel();
+  };
+
+  enableBtn.addEventListener("click", () => {
+    show(softAsk);
+    setNotificationStatus("Review this prompt, then continue when ready.");
+  });
+
+  allowSoftAskBtn.addEventListener("click", async () => {
+    allowSoftAskBtn.disabled = true;
+    dismissSoftAskBtn.disabled = true;
+    try {
+      await requestNativePermission();
+      hide(softAsk);
+    } catch {
+      show(retryBtn);
+    } finally {
+      allowSoftAskBtn.disabled = false;
+      dismissSoftAskBtn.disabled = false;
+    }
+  });
+
+  dismissSoftAskBtn.addEventListener("click", () => {
+    localStorage.setItem(NOTIFICATION_SOFT_ASK_KEY, String(Date.now()));
+    hide(softAsk);
+    setNotificationStatus("No problem — you can enable notifications later.");
+  });
+
+  retryBtn.addEventListener("click", async () => {
+    retryBtn.disabled = true;
+    try {
+      await ensurePushSubscription();
+      hide(retryBtn);
+    } catch {
+      // keep visible for another retry
+    } finally {
+      retryBtn.disabled = false;
+      renderNotificationPanel();
+    }
+  });
+
+  disableBtn.addEventListener("click", async () => {
+    if (!isNotificationSupported()) return;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const sub = await registration.pushManager.getSubscription();
+      if (sub) {
+        await api.post("/push/unsubscribe", { endpoint: sub.endpoint });
+        await sub.unsubscribe();
+      }
+      localStorage.removeItem(NOTIFICATION_LAST_ERROR_KEY);
+      setNotificationStatus("Notification subscription removed from this browser.");
+    } catch (err) {
+      setNotificationStatus(`Could not disable notifications: ${(err as Error).message}`, "error");
+    } finally {
+      renderNotificationPanel();
+    }
+  });
+
+  renderNotificationPanel();
+}
+
 function renderPublications(pubs: Publication[]): void {
   const container = $("#publications-list");
   if (pubs.length === 0) {
@@ -694,11 +1000,149 @@ function renderPublications(pubs: Publication[]): void {
   }</div>`;
 }
 
+// ─── Install prompt lifecycle ────────────────────
+
+function isStandaloneMode(): boolean {
+  const nav = navigator as Navigator & { standalone?: boolean };
+  return globalThis.matchMedia("(display-mode: standalone)").matches || nav.standalone === true;
+}
+
+function initInstallPrompt(): void {
+  const installButton = document.getElementById("install-app-btn") as HTMLButtonElement | null;
+  const installState = document.getElementById("install-app-state") as HTMLSpanElement | null;
+  const installHint = document.getElementById("install-app-hint") as HTMLParagraphElement | null;
+  if (!installButton || !installState || !installHint) return;
+
+  const updateInstallState = (
+    label: string,
+    kind: "pending" | "ready" | "installed" | "error" = "pending",
+  ) => {
+    installState.textContent = label;
+    installState.classList.remove("is-ready", "is-installed", "is-error");
+    if (kind === "ready") installState.classList.add("is-ready");
+    if (kind === "installed") installState.classList.add("is-installed");
+    if (kind === "error") installState.classList.add("is-error");
+  };
+
+  const setInstallable = (installable: boolean) => {
+    installButton.hidden = !installable;
+    installButton.disabled = !installable;
+  };
+
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+  if (isStandaloneMode()) {
+    updateInstallState("Installed", "installed");
+    installHint.textContent = "App is installed and will auto-update on restart.";
+    setInstallable(false);
+  } else {
+    updateInstallState("Waiting for browser", "pending");
+    installHint.textContent =
+      "Install for a faster app-like experience and automatic update checks on restart.";
+    setInstallable(false);
+  }
+
+  globalThis.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event as BeforeInstallPromptEvent;
+    updateInstallState("Ready to install", "ready");
+    setInstallable(true);
+  });
+
+  installButton.addEventListener("click", async () => {
+    if (!deferredInstallPrompt) {
+      updateInstallState("Use browser install menu", "pending");
+      installHint.textContent =
+        "If no prompt appears, use your browser menu and choose Install app / Add to Home Screen.";
+      return;
+    }
+
+    installButton.disabled = true;
+    try {
+      await deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      if (choice.outcome === "accepted") {
+        updateInstallState("Installing…", "ready");
+      } else {
+        updateInstallState("Install dismissed", "error");
+        installHint.textContent = "You can install later from your browser menu.";
+      }
+    } finally {
+      deferredInstallPrompt = null;
+      installButton.disabled = false;
+      setInstallable(false);
+    }
+  });
+
+  globalThis.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    updateInstallState("Installed", "installed");
+    installHint.textContent =
+      "App installed. It will refresh to the latest version on next restart.";
+    setInstallable(false);
+  });
+
+  if (!isStandaloneMode() && isIOS && isSafari) {
+    updateInstallState("Use Share menu", "ready");
+    installHint.textContent =
+      "On iPhone/iPad: tap Share, then “Add to Home Screen” to install this app.";
+  }
+}
+
+// ─── Service worker lifecycle ────────────────────
+
+let swControllerRefreshPending = false;
+
+function registerServiceWorker(): void {
+  if (!("serviceWorker" in navigator)) return;
+
+  const updateOnRestartFlag = "sw:update-on-restart";
+  let activatingUpdate = false;
+
+  const triggerUpdate = registerSW({
+    immediate: true,
+    onRegisteredSW(_swUrl, registration) {
+      if (!registration) return;
+
+      const hasPendingUpdate = Boolean(registration.waiting);
+      const shouldApplyNow = sessionStorage.getItem(updateOnRestartFlag) === "1";
+
+      if (hasPendingUpdate && shouldApplyNow) {
+        sessionStorage.removeItem(updateOnRestartFlag);
+        activatingUpdate = true;
+        triggerUpdate(true);
+        return;
+      }
+
+      sessionStorage.setItem(updateOnRestartFlag, hasPendingUpdate ? "1" : "0");
+      void registration.update();
+    },
+    onNeedRefresh() {
+      sessionStorage.setItem(updateOnRestartFlag, "1");
+    },
+    onOfflineReady() {
+      // Intentionally silent; app shell is now cached for offline restart.
+    },
+  });
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swControllerRefreshPending) return;
+    if (!activatingUpdate) return;
+
+    swControllerRefreshPending = true;
+    globalThis.location.reload();
+  });
+}
+
 // ─── Init ────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
+  registerServiceWorker();
+  initInstallPrompt();
   initTheme();
   checkAuth();
+  initNotifications();
 
   // Theme toggles (both login and dashboard)
   $("#theme-toggle").addEventListener("click", toggleTheme);

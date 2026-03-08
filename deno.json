@@ -32,7 +32,9 @@
     "@std/yaml": "jsr:@std/yaml@^1",
     "@std/crypto": "jsr:@std/crypto@^1",
     "tailwindcss": "npm:tailwindcss@^4",
-    "@tailwindcss/vite": "npm:@tailwindcss/vite@^4"
+    "@tailwindcss/vite": "npm:@tailwindcss/vite@^4",
+    "vite-plugin-pwa": "npm:vite-plugin-pwa@^0.21",
+    "workbox-window": "npm:workbox-window@^7"
   },
   "unstable": ["kv"],
   "compilerOptions": {

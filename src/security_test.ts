@@ -21,6 +21,11 @@ function testConfig(): AppConfig {
       isProduction: false,
     },
     github: { clientId: "test-id", clientSecret: "test-secret" },
+    push: {
+      vapidPublicKey: "",
+      vapidPrivateKey: "",
+      vapidSubject: "",
+    },
     encryptionSecret: ENCRYPTION_SECRET,
     defaults: { publishPlatforms: [] },
   };
@@ -241,13 +246,15 @@ Deno.test("Security: non-UUID session cookie is rejected", async () => {
   const { app, store } = await setup();
 
   // Malformed session IDs should be rejected before KV lookup
-  for (const badSid of [
-    "sid=not-a-uuid",
-    "sid=../../../etc/passwd",
-    "sid=<script>alert(1)</script>",
-    "sid=",
-    "sid=a".repeat(1000),
-  ]) {
+  for (
+    const badSid of [
+      "sid=not-a-uuid",
+      "sid=../../../etc/passwd",
+      "sid=<script>alert(1)</script>",
+      "sid=",
+      "sid=a".repeat(1000),
+    ]
+  ) {
     const res = await app.request("/api/publications", {
       headers: { Cookie: badSid },
     });
@@ -353,13 +360,15 @@ Deno.test("Security: /api/publish rejects path traversal in gistId", async () =>
   const { app, store } = await setup();
   const cookie = await createSession(store, "alice", "alice");
 
-  for (const badId of [
-    "../users",
-    "abc/../../admin",
-    "abc def",
-    "<script>",
-    "gist123!@#",
-  ]) {
+  for (
+    const badId of [
+      "../users",
+      "abc/../../admin",
+      "abc def",
+      "<script>",
+      "gist123!@#",
+    ]
+  ) {
     const res = await app.request("/api/publish", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },

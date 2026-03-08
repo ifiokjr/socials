@@ -24,6 +24,14 @@ export interface AppConfig {
     /** OAuth App client secret. */
     clientSecret: string;
   };
+  push: {
+    /** Public VAPID key for browser push subscription. */
+    vapidPublicKey: string;
+    /** Private VAPID key used by the server to sign push requests. */
+    vapidPrivateKey: string;
+    /** Contact URL/email included in VAPID JWT subject. */
+    vapidSubject: string;
+  };
   /** Secret used to derive AES keys for encrypting user credentials in KV. */
   encryptionSecret: string;
   defaults: {
@@ -43,11 +51,21 @@ export function loadConfig(): AppConfig {
   const baseUrl = env("BASE_URL", `http://localhost:${port}`);
 
   const encryptionSecret = env("ENCRYPTION_SECRET");
+  const vapidPublicKey = env("VAPID_PUBLIC_KEY");
+  const vapidPrivateKey = env("VAPID_PRIVATE_KEY");
+  const vapidSubject = env("VAPID_SUBJECT");
 
   if (isProd && !encryptionSecret) {
     throw new Error(
       "ENCRYPTION_SECRET must be set in production. " +
         "Generate one with: openssl rand -base64 32",
+    );
+  }
+
+  if (isProd && (!vapidPublicKey || !vapidPrivateKey || !vapidSubject)) {
+    throw new Error(
+      "VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT must be set in production. " +
+        "Generate keys with: npx web-push generate-vapid-keys",
     );
   }
 
@@ -68,6 +86,11 @@ export function loadConfig(): AppConfig {
     github: {
       clientId: env("GITHUB_CLIENT_ID"),
       clientSecret: env("GITHUB_CLIENT_SECRET"),
+    },
+    push: {
+      vapidPublicKey,
+      vapidPrivateKey,
+      vapidSubject,
     },
     encryptionSecret: encryptionSecret || "dev-secret-change-me-in-production",
     defaults: {

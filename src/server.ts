@@ -1,7 +1,14 @@
 import { Hono } from "@hono/hono";
 import { serveStatic } from "@hono/hono/deno";
+import webPush from "npm:web-push@^3.6.7";
 import type { AppConfig } from "./config.ts";
-import type { Platform, RecentGistPlatformStatus, UserPreferences } from "./types.ts";
+import type {
+  Platform,
+  PushTestPayload,
+  RecentGistPlatformStatus,
+  StoredPushSubscription,
+  UserPreferences,
+} from "./types.ts";
 import { Store, type UserProfile } from "./db/store.ts";
 import {
   buildAuthorizeUrl,
@@ -20,6 +27,12 @@ import { GistClient } from "./gist/mod.ts";
 
 /** GitHub gist IDs are lowercase hex strings, typically 20–32 chars. */
 const GIST_ID_RE = /^[a-f0-9]{1,64}$/;
+const PUSH_KEY_RE = /^[A-Za-z0-9_-]+$/;
+const MAX_PUSH_ENDPOINT_LENGTH = 2048;
+const MAX_PUSH_SUBSCRIPTIONS_PER_USER = 20;
+const MAX_PUSH_TITLE_LENGTH = 120;
+const MAX_PUSH_BODY_LENGTH = 400;
+const MAX_PUSH_TAG_LENGTH = 64;
 
 // ── Hono env type for typed context ──────────────
 
@@ -37,9 +50,94 @@ export function createApp(
   const app = new Hono<Env>();
   const store = existingStore ?? new Store();
 
+  const hasPushConfig = Boolean(
+    config.push.vapidSubject &&
+      config.push.vapidPublicKey &&
+      config.push.vapidPrivateKey,
+  );
+
+  let pushReady = false;
+  if (hasPushConfig) {
+    try {
+      webPush.setVapidDetails(
+        config.push.vapidSubject,
+        config.push.vapidPublicKey,
+        config.push.vapidPrivateKey,
+      );
+      pushReady = true;
+    } catch (err) {
+      console.warn(`Push disabled: ${(err as Error).message}`);
+    }
+  }
+
+  const sendPushToSubscription = async (
+    userId: string,
+    subscription: StoredPushSubscription,
+    payload: PushTestPayload,
+  ): Promise<boolean> => {
+    const p256dh = subscription.keys.p256dh ?? "";
+    const auth = subscription.keys.auth ?? "";
+
+    if (
+      !isValidPushEndpoint(subscription.endpoint) ||
+      !isValidPushKey(p256dh) ||
+      !isValidPushKey(auth)
+    ) {
+      await store.removePushSubscription(userId, subscription.endpoint);
+      return false;
+    }
+
+    try {
+      await webPush.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          expirationTime: subscription.expirationTime,
+          keys: { p256dh, auth },
+        },
+        JSON.stringify(payload),
+      );
+      return true;
+    } catch (err) {
+      const statusCode = (err as { statusCode?: number }).statusCode;
+      if (statusCode === 404 || statusCode === 410) {
+        await store.removePushSubscription(userId, subscription.endpoint);
+      }
+      return false;
+    }
+  };
+
   const getUserDefaultPlatforms = async (userId: string): Promise<Platform[]> => {
     const stored = await store.getPreferences(userId);
     return stored?.defaultPlatforms ?? config.defaults.publishPlatforms;
+  };
+
+  const isValidPushEndpoint = (endpoint: string): boolean => {
+    if (!endpoint || endpoint.length > MAX_PUSH_ENDPOINT_LENGTH) return false;
+
+    try {
+      const parsed = new URL(endpoint);
+      return parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  const isValidPushKey = (value: string): boolean => {
+    return value.length >= 8 && value.length <= 512 && PUSH_KEY_RE.test(value);
+  };
+
+  const normalizePushUrl = (input: unknown): string => {
+    if (typeof input !== "string") return "/";
+
+    const trimmed = input.trim();
+    if (!trimmed.startsWith("/")) return "/";
+
+    try {
+      const parsed = new URL(trimmed, config.server.baseUrl);
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      return "/";
+    }
   };
 
   // ── Security headers ───────────────────────────
@@ -63,7 +161,7 @@ export function createApp(
   });
 
   /** Redirect to GitHub OAuth — sets state cookie for CSRF protection. */
-  app.get("/auth/login", (c) => {
+  app.get("/auth/login", () => {
     const state = crypto.randomUUID();
     const url = buildAuthorizeUrl(
       {
@@ -355,6 +453,119 @@ export function createApp(
     const preferences: UserPreferences = { defaultPlatforms: uniqueDefaults };
     await store.setPreferences(userId, preferences);
     return c.json({ preferences });
+  });
+
+  // ── Push notifications ───────────────────────
+
+  app.get("/api/push/public-key", (c) => {
+    if (!pushReady || !config.push.vapidPublicKey) {
+      return c.json({ error: "Push notifications are not configured" }, 503);
+    }
+    return c.json({ publicKey: config.push.vapidPublicKey });
+  });
+
+  app.post("/api/push/subscribe", async (c) => {
+    const userId = c.get("userId");
+    const body = await c.req.json();
+
+    const endpoint = typeof body?.endpoint === "string" ? body.endpoint.trim() : "";
+    const expirationTime = body?.expirationTime === null || typeof body?.expirationTime === "number"
+      ? body.expirationTime
+      : null;
+    const p256dh = typeof body?.keys?.p256dh === "string" ? body.keys.p256dh : "";
+    const auth = typeof body?.keys?.auth === "string" ? body.keys.auth : "";
+
+    if (!endpoint) {
+      return c.json({ error: "endpoint is required" }, 400);
+    }
+
+    if (!isValidPushEndpoint(endpoint)) {
+      return c.json({ error: "Invalid push endpoint" }, 400);
+    }
+
+    if (
+      expirationTime !== null &&
+      (!Number.isFinite(expirationTime) || expirationTime <= 0)
+    ) {
+      return c.json({ error: "expirationTime must be null or a positive number" }, 400);
+    }
+
+    if (!isValidPushKey(p256dh) || !isValidPushKey(auth)) {
+      return c.json({ error: "Invalid subscription keys" }, 400);
+    }
+
+    const existing = await store.listPushSubscriptions(userId);
+    const alreadyKnown = existing.some((subscription) => subscription.endpoint === endpoint);
+    if (!alreadyKnown && existing.length >= MAX_PUSH_SUBSCRIPTIONS_PER_USER) {
+      return c.json(
+        { error: `Subscription limit reached (${MAX_PUSH_SUBSCRIPTIONS_PER_USER})` },
+        400,
+      );
+    }
+
+    await store.savePushSubscription(userId, {
+      endpoint,
+      expirationTime,
+      keys: { p256dh, auth },
+    });
+    return c.json({ success: true });
+  });
+
+  app.post("/api/push/unsubscribe", async (c) => {
+    const userId = c.get("userId");
+    const body = await c.req.json();
+    const endpoint = typeof body?.endpoint === "string" ? body.endpoint.trim() : "";
+
+    if (!endpoint) {
+      return c.json({ error: "endpoint is required" }, 400);
+    }
+
+    if (!isValidPushEndpoint(endpoint)) {
+      return c.json({ error: "Invalid push endpoint" }, 400);
+    }
+
+    await store.removePushSubscription(userId, endpoint);
+    return c.json({ success: true });
+  });
+
+  app.post("/api/push/test", async (c) => {
+    const userId = c.get("userId");
+    const body = await c.req.json();
+    const titleInput = typeof body?.title === "string" ? body.title.trim() : "";
+    const bodyInput = typeof body?.body === "string" ? body.body.trim() : "";
+    const tagInput = typeof body?.tag === "string" ? body.tag.trim() : "";
+
+    const payload: PushTestPayload = {
+      title: titleInput ? titleInput.slice(0, MAX_PUSH_TITLE_LENGTH) : "Test notification",
+      body: bodyInput
+        ? bodyInput.slice(0, MAX_PUSH_BODY_LENGTH)
+        : "This is a test push notification.",
+      url: normalizePushUrl(body?.url),
+      tag: tagInput ? tagInput.slice(0, MAX_PUSH_TAG_LENGTH) : "test-notification",
+    };
+
+    if (!pushReady) {
+      return c.json({ error: "Push notifications are not configured" }, 503);
+    }
+
+    const subscriptions = await store.listPushSubscriptions(userId);
+    if (subscriptions.length === 0) {
+      return c.json({ error: "No push subscriptions found" }, 404);
+    }
+
+    const results = await Promise.all(
+      subscriptions.map((subscription) => sendPushToSubscription(userId, subscription, payload)),
+    );
+
+    const sent = results.filter(Boolean).length;
+    const failed = results.length - sent;
+
+    return c.json({
+      success: sent > 0,
+      sent,
+      failed,
+      total: results.length,
+    });
   });
 
   // ── Gists ─────────────────────────────────────
