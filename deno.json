@@ -30,7 +30,9 @@
     "@std/streams": "jsr:@std/streams@^1",
     "@std/text": "jsr:@std/text@^1",
     "@std/yaml": "jsr:@std/yaml@^1",
-    "@std/crypto": "jsr:@std/crypto@^1"
+    "@std/crypto": "jsr:@std/crypto@^1",
+    "tailwindcss": "npm:tailwindcss@^4",
+    "@tailwindcss/vite": "npm:@tailwindcss/vite@^4"
   },
   "unstable": ["kv"],
   "compilerOptions": {
