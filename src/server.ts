@@ -1,8 +1,7 @@
 import { Hono } from "@hono/hono";
-import { cors } from "@hono/hono/cors";
 import { serveStatic } from "@hono/hono/deno";
 import type { AppConfig } from "./config.ts";
-import type { Platform } from "./types.ts";
+import type { Platform, RecentGistPlatformStatus, UserPreferences } from "./types.ts";
 import { Store, type UserProfile } from "./db/store.ts";
 import {
   buildAuthorizeUrl,
@@ -13,7 +12,14 @@ import {
   type Session,
 } from "./auth/mod.ts";
 import { PublishEngine } from "./publisher/engine.ts";
-import { ALL_PLATFORMS, PLATFORM_SETUP, getSetupInfo } from "./platforms/mod.ts";
+import { ALL_PLATFORMS, getSetupInfo, PLATFORM_SETUP } from "./platforms/mod.ts";
+import { buildUserPreferences } from "./platforms/setup.ts";
+import { GistClient } from "./gist/mod.ts";
+
+// ── Constants ────────────────────────────────────
+
+/** GitHub gist IDs are lowercase hex strings, typically 20–32 chars. */
+const GIST_ID_RE = /^[a-f0-9]{1,64}$/;
 
 // ── Hono env type for typed context ──────────────
 
@@ -31,7 +37,19 @@ export function createApp(
   const app = new Hono<Env>();
   const store = existingStore ?? new Store();
 
-  app.use("*", cors());
+  // ── Security headers ───────────────────────────
+
+  app.use("*", async (c, next) => {
+    await next();
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("X-Frame-Options", "DENY");
+    c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    c.header("X-XSS-Protection", "1; mode=block");
+    c.header(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=()",
+    );
+  });
 
   // ── Auth routes (no session required) ──────────
 
@@ -39,7 +57,7 @@ export function createApp(
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  /** Redirect to GitHub OAuth */
+  /** Redirect to GitHub OAuth — sets state cookie for CSRF protection. */
   app.get("/auth/login", (c) => {
     const state = crypto.randomUUID();
     const url = buildAuthorizeUrl(
@@ -50,13 +68,31 @@ export function createApp(
       },
       state,
     );
-    return c.redirect(url);
+    const headers = new Headers();
+    headers.set("Location", url);
+    headers.set(
+      "Set-Cookie",
+      SessionStore.setOAuthStateCookie(state, config.server.isProduction),
+    );
+    return new Response(null, { status: 302, headers });
   });
 
-  /** GitHub OAuth callback */
+  /** GitHub OAuth callback — validates state to prevent CSRF. */
   app.get("/auth/callback", async (c) => {
     const code = c.req.query("code");
-    if (!code) return c.json({ error: "Missing code" }, 400);
+    const state = c.req.query("state");
+
+    if (!code) return c.json({ error: "Missing code parameter" }, 400);
+    if (!state) return c.json({ error: "Missing state parameter" }, 400);
+
+    // ── CSRF check: compare state param with cookie ──
+    const cookieState = SessionStore.extractOAuthState(c.req.header("Cookie"));
+    if (!cookieState || cookieState !== state) {
+      return c.json(
+        { error: "Invalid OAuth state — possible CSRF attack. Please try logging in again." },
+        403,
+      );
+    }
 
     try {
       const tokenRes = await exchangeCode(
@@ -96,15 +132,19 @@ export function createApp(
         createdAt: new Date().toISOString(),
       });
 
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: "/",
-          "Set-Cookie": SessionStore.setCookie(sid, config.server.isProduction),
-        },
-      });
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      // Set session cookie AND clear the OAuth state cookie
+      const headers = new Headers();
+      headers.set("Location", "/");
+      headers.append(
+        "Set-Cookie",
+        SessionStore.setCookie(sid, config.server.isProduction),
+      );
+      headers.append("Set-Cookie", SessionStore.clearOAuthStateCookie());
+      return new Response(null, { status: 302, headers });
+    } catch (_err) {
+      // Don't leak internal error details to the client
+      console.error("OAuth callback error:", (_err as Error).message);
+      return c.json({ error: "Authentication failed. Please try again." }, 500);
     }
   });
 
@@ -126,11 +166,21 @@ export function createApp(
   /** Check current session (unauthenticated-safe). */
   app.get("/api/me", async (c) => {
     const sid = SessionStore.extractId(c.req.header("Cookie"));
-    if (!sid) return c.json({ user: null });
+    if (!sid) {
+      return c.json({
+        user: null,
+        defaults: buildUserPreferences(config.defaults.publishPlatforms),
+      });
+    }
 
     const sessions = new SessionStore(store.kv);
     const session = await sessions.get(sid);
-    if (!session) return c.json({ user: null });
+    if (!session) {
+      return c.json({
+        user: null,
+        defaults: buildUserPreferences(config.defaults.publishPlatforms),
+      });
+    }
 
     const profile = await store.getUser(session.userId);
     return c.json({
@@ -142,6 +192,7 @@ export function createApp(
           avatarUrl: profile.avatarUrl,
         }
         : null,
+      defaults: buildUserPreferences(config.defaults.publishPlatforms),
     });
   });
 
@@ -220,6 +271,10 @@ export function createApp(
   /** Remove credentials for a platform. */
   app.delete("/api/platforms/:platform", async (c) => {
     const platform = c.req.param("platform") as Platform;
+    // Validate platform is known — don't write arbitrary keys to KV
+    if (!ALL_PLATFORMS.includes(platform)) {
+      return c.json({ error: "Unknown platform" }, 404);
+    }
     const userId = c.get("userId");
     await store.deleteCredentials(userId, platform);
     return c.json({ success: true });
@@ -258,6 +313,87 @@ export function createApp(
     return c.json({ success: true });
   });
 
+  // ── User preferences ──────────────────────────
+
+  app.get("/api/preferences", async (c) => {
+    const userId = c.get("userId");
+    const stored = await store.getPreferences(userId);
+    const preferences: UserPreferences = {
+      defaultPlatforms: stored?.defaultPlatforms ?? config.defaults.publishPlatforms,
+    };
+    return c.json({ preferences });
+  });
+
+  app.put("/api/preferences", async (c) => {
+    const userId = c.get("userId");
+    const body = await c.req.json();
+    const defaultPlatforms = body?.defaultPlatforms;
+
+    if (!Array.isArray(defaultPlatforms)) {
+      return c.json({ error: "defaultPlatforms must be an array" }, 400);
+    }
+
+    const invalid = defaultPlatforms.filter((platform: unknown) =>
+      typeof platform !== "string" || !ALL_PLATFORMS.includes(platform as Platform)
+    );
+    if (invalid.length > 0) {
+      return c.json({ error: `Unsupported platforms: ${invalid.join(", ")}` }, 400);
+    }
+
+    const uniqueDefaults = Array.from(new Set(defaultPlatforms as Platform[]));
+    const configured = await store.listConfiguredPlatforms(userId);
+    const unconfigured = uniqueDefaults.filter((platform) => !configured.includes(platform));
+    if (unconfigured.length > 0) {
+      return c.json({ error: `Platforms not configured: ${unconfigured.join(", ")}` }, 400);
+    }
+
+    const preferences: UserPreferences = { defaultPlatforms: uniqueDefaults };
+    await store.setPreferences(userId, preferences);
+    return c.json({ preferences });
+  });
+
+  // ── Gists ─────────────────────────────────────
+
+  app.get("/api/gists/recent", async (c) => {
+    const session = c.get("session");
+    const userId = c.get("userId");
+    const client = new GistClient({ token: session.githubToken });
+    const limitParam = c.req.query("limit");
+    const parsedLimit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
+    const limit = Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(parsedLimit!, 50))
+      : 10;
+
+    try {
+      const [gists, recentFromStore] = await Promise.all([
+        client.listRecentPublishableGists({ limit }),
+        store.getRecentGists(userId),
+      ]);
+
+      const storeByGistId = new Map(
+        recentFromStore.map((gist) => [gist.id, gist]),
+      );
+      const enriched = gists.map((gist) => {
+        const fromStore = storeByGistId.get(gist.id);
+        const platformStatuses: RecentGistPlatformStatus[] =
+          fromStore?.publishedPlatforms.map((platform) => ({
+            platform,
+            status: "published",
+          })) ?? [];
+
+        return {
+          ...gist,
+          publishedPlatforms: fromStore?.publishedPlatforms ?? [],
+          platformStatuses,
+        };
+      });
+
+      return c.json({ gists: enriched });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
   // ── Publications ──────────────────────────────
 
   app.get("/api/publications", async (c) => {
@@ -278,6 +414,11 @@ export function createApp(
       return c.json({ error: "gistId is required" }, 400);
     }
 
+    // Validate gistId format to prevent SSRF via path traversal
+    if (!GIST_ID_RE.test(gistId)) {
+      return c.json({ error: "Invalid gistId format" }, 400);
+    }
+
     const session = c.get("session");
     const engine = new PublishEngine({
       githubToken: session.githubToken,
@@ -287,7 +428,9 @@ export function createApp(
     });
 
     try {
-      const publication = await engine.processGist(gistId);
+      const publication = await engine.processGist(gistId, {
+        defaultPlatforms: config.defaults.publishPlatforms,
+      });
       return c.json({ publication });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
@@ -307,7 +450,9 @@ export function createApp(
     });
 
     try {
-      const updated = await engine.processGist(pub.gistId);
+      const updated = await engine.processGist(pub.gistId, {
+        defaultPlatforms: config.defaults.publishPlatforms,
+      });
       return c.json({ publication: updated });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);

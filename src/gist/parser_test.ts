@@ -153,14 +153,25 @@ Content`;
   assertThrows(() => parseGistContent(raw), GistParseError, "'type' must be one of");
 });
 
-Deno.test("parseGistContent - throws on empty platforms", () => {
+Deno.test("parseGistContent - allows empty platforms for engine defaults", () => {
   const raw = `---
 title: Test
 type: post
 platforms: []
 ---
 Content`;
-  assertThrows(() => parseGistContent(raw), GistParseError, "non-empty 'platforms' array");
+  const result = parseGistContent(raw);
+  assertEquals(result.meta.platforms, []);
+});
+
+Deno.test("parseGistContent - allows missing platforms field", () => {
+  const raw = `---
+title: Test
+type: post
+---
+Content`;
+  const result = parseGistContent(raw);
+  assertEquals(result.meta.platforms, []);
 });
 
 Deno.test("parseGistContent - throws on invalid platform", () => {

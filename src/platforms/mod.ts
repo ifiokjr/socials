@@ -80,3 +80,17 @@ export const ALL_PLATFORMS: Platform[] = [
   "threads",
   "reddit",
 ];
+
+export const PLATFORM_DISPLAY_NAMES: Record<Platform, string> = {
+  twitter: "X (Twitter)",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  linkedin: "LinkedIn",
+  youtube: "YouTube",
+  mastodon: "Mastodon",
+  bluesky: "Bluesky",
+  tiktok: "TikTok",
+  pinterest: "Pinterest",
+  threads: "Threads",
+  reddit: "Reddit",
+};

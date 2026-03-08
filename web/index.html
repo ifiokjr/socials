@@ -95,12 +95,25 @@
           <!-- Publish form -->
           <section class="glass-card p-6" id="publish-section">
             <h2 class="text-sm font-semibold uppercase tracking-widest text-surface-400 light:text-surface-500 mb-4">Publish a Gist</h2>
-            <form id="publish-form" class="flex flex-col sm:flex-row gap-3">
-              <input type="text" id="gist-id" name="gistId" class="input-field flex-1 font-mono text-sm" placeholder="Paste a Gist ID or URL…" required />
-              <button type="submit" id="publish-btn"
-                class="shrink-0 rounded-lg bg-accent hover:bg-accent-hover text-white font-semibold px-6 py-3 text-sm transition-all duration-200 hover:shadow-lg hover:shadow-accent/20 active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none">
-                Publish
-              </button>
+            <form id="publish-form" class="space-y-4">
+              <div>
+                <label for="gist-select" class="block text-xs font-medium text-surface-400 light:text-surface-500 mb-1.5">Select a recent gist</label>
+                <select id="gist-select" class="input-field text-sm" aria-label="Select a recent gist">
+                  <option value="">Loading recent gists…</option>
+                </select>
+              </div>
+              <details id="manual-gist-details" class="rounded-lg border border-surface-800 light:border-surface-300 bg-surface-900/30 light:bg-surface-100/60">
+                <summary class="cursor-pointer select-none px-4 py-3 text-[0.78rem] font-medium text-surface-400 light:text-surface-500">Or paste a gist URL/ID manually</summary>
+                <div class="px-4 pb-4 pt-1">
+                  <input type="text" id="gist-id" name="gistId" class="input-field flex-1 font-mono text-sm" placeholder="Paste a Gist ID or URL…" />
+                </div>
+              </details>
+              <div class="flex justify-end">
+                <button type="submit" id="publish-btn"
+                  class="shrink-0 rounded-lg bg-accent hover:bg-accent-hover text-white font-semibold px-6 py-3 text-sm transition-all duration-200 hover:shadow-lg hover:shadow-accent/20 active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none">
+                  Publish
+                </button>
+              </div>
             </form>
             <div id="publish-result" class="mt-4 rounded-lg px-4 py-3 text-sm" hidden></div>
           </section>

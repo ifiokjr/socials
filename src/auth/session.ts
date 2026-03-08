@@ -16,6 +16,7 @@ export interface Session {
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const COOKIE_NAME = "sid";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class SessionStore {
   #kv: Deno.Kv;
@@ -64,10 +65,38 @@ export class SessionStore {
     return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
   }
 
+  /** Build a Set-Cookie that sets the OAuth state for CSRF protection. */
+  static setOAuthStateCookie(state: string, secure: boolean): string {
+    const parts = [
+      `__oauth_state=${state}`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Max-Age=600", // 10 minutes
+    ];
+    if (secure) parts.push("Secure");
+    return parts.join("; ");
+  }
+
+  /** Build a Set-Cookie that clears the OAuth state. */
+  static clearOAuthStateCookie(): string {
+    return "__oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
+  }
+
+  /** Extract the OAuth state from a Cookie header string. */
+  static extractOAuthState(cookieHeader: string | null | undefined): string | null {
+    if (!cookieHeader) return null;
+    const match = cookieHeader.match(/(?:^|;\s*)__oauth_state=([^;]+)/);
+    return match?.[1] ?? null;
+  }
+
   /** Extract the session id from a Cookie header string. */
   static extractId(cookieHeader: string | null | undefined): string | null {
     if (!cookieHeader) return null;
     const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
-    return match?.[1] ?? null;
+    const id = match?.[1] ?? null;
+    // Validate UUID format to prevent arbitrary KV lookups
+    if (id && !UUID_RE.test(id)) return null;
+    return id;
   }
 }

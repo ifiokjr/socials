@@ -72,6 +72,23 @@ export interface Gist {
   };
 }
 
+/** Summary used for recent gist selection in UI/API. */
+export interface RecentGistPlatformStatus {
+  platform: Platform;
+  status: PublishStatus;
+}
+
+export interface RecentGist {
+  id: string;
+  description: string;
+  htmlUrl: string;
+  updatedAt: string;
+  publishedPlatforms: Platform[];
+  platformStatuses?: RecentGistPlatformStatus[];
+  ownerLogin?: string;
+  markdownFiles: string[];
+}
+
 /** A file within a gist */
 export interface GistFile {
   filename: string;
@@ -213,6 +230,11 @@ export interface PlatformSetupField {
   type: "text" | "password" | "url";
   placeholder?: string;
   helpUrl?: string;
+}
+
+/** Per-user preferences stored in KV. */
+export interface UserPreferences {
+  defaultPlatforms: Platform[];
 }
 
 /** B2 / S3 types (still used by the storage client) */

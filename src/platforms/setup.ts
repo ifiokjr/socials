@@ -1,4 +1,4 @@
-import type { Platform, PlatformSetupField } from "../types.ts";
+import type { Platform, PlatformSetupField, UserPreferences } from "../types.ts";
 
 /** Human-readable info + required fields for each platform's setup wizard. */
 export interface PlatformSetupInfo {
@@ -174,4 +174,25 @@ export const PLATFORM_SETUP: PlatformSetupInfo[] = [
 /** Look up setup info for one platform. */
 export function getSetupInfo(platform: Platform): PlatformSetupInfo | undefined {
   return PLATFORM_SETUP.find((s) => s.platform === platform);
+}
+
+/** Parse and validate comma-separated default platforms from env config. */
+export function parseDefaultPlatforms(input: string): Platform[] {
+  if (!input.trim()) return [];
+
+  const allowed = new Set<Platform>(PLATFORM_SETUP.map((s) => s.platform));
+  const unique: Platform[] = [];
+
+  for (const raw of input.split(",")) {
+    const normalized = raw.trim().toLowerCase() as Platform;
+    if (!normalized || !allowed.has(normalized) || unique.includes(normalized)) continue;
+    unique.push(normalized);
+  }
+
+  return unique;
+}
+
+/** Build per-user preference object with validated defaults. */
+export function buildUserPreferences(defaultPlatforms: Platform[]): UserPreferences {
+  return { defaultPlatforms };
 }

@@ -9,6 +9,9 @@ function testConfig(): AppConfig {
     server: { port: 0, host: "127.0.0.1", baseUrl: "http://localhost:0", isProduction: false },
     github: { clientId: "test-id", clientSecret: "test-secret" },
     encryptionSecret: "test-encryption-secret-for-unit-tests",
+    defaults: {
+      publishPlatforms: ["twitter"],
+    },
   };
 }
 
@@ -43,11 +46,13 @@ Deno.test("GET /api/health returns ok", async () => {
   store.close();
 });
 
-Deno.test("GET /api/me returns null without session", async () => {
+Deno.test("GET /api/me returns null user and app defaults without session", async () => {
   const { app, store } = await setup();
   const res = await app.request("/api/me");
   assertEquals(res.status, 200);
-  assertEquals((await res.json()).user, null);
+  const body = await res.json();
+  assertEquals(body.user, null);
+  assertEquals(body.defaults.defaultPlatforms, ["twitter"]);
   store.close();
 });
 
@@ -242,6 +247,73 @@ Deno.test("Storage config CRUD via API", async () => {
     headers: { Cookie: cookie },
   });
   assertEquals(res.status, 200);
+
+  store.close();
+});
+
+Deno.test("GET /api/preferences returns app defaults when user has none", async () => {
+  const { app, store } = await setup();
+  const { cookie } = await withSession(store);
+
+  const res = await app.request("/api/preferences", {
+    headers: { Cookie: cookie },
+  });
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).preferences.defaultPlatforms, ["twitter"]);
+
+  store.close();
+});
+
+Deno.test("PUT /api/preferences saves user defaults", async () => {
+  const { app, store } = await setup();
+  const { cookie, userId } = await withSession(store);
+
+  await app.request("/api/platforms/bluesky/setup", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ handle: "me.bsky.social", appPassword: "xxxx-xxxx" }),
+  });
+
+  const res = await app.request("/api/preferences", {
+    method: "PUT",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ defaultPlatforms: ["bluesky", "bluesky"] }),
+  });
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).preferences.defaultPlatforms, ["bluesky"]);
+
+  const stored = await store.getPreferences(userId);
+  assertEquals(stored?.defaultPlatforms, ["bluesky"]);
+
+  store.close();
+});
+
+Deno.test("PUT /api/preferences rejects unsupported platforms", async () => {
+  const { app, store } = await setup();
+  const { cookie } = await withSession(store);
+
+  const res = await app.request("/api/preferences", {
+    method: "PUT",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ defaultPlatforms: ["myspace"] }),
+  });
+  assertEquals(res.status, 400);
+  assertEquals((await res.json()).error.includes("Unsupported platforms"), true);
+
+  store.close();
+});
+
+Deno.test("PUT /api/preferences rejects unconfigured platforms", async () => {
+  const { app, store } = await setup();
+  const { cookie } = await withSession(store);
+
+  const res = await app.request("/api/preferences", {
+    method: "PUT",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ defaultPlatforms: ["twitter"] }),
+  });
+  assertEquals(res.status, 400);
+  assertEquals((await res.json()).error.includes("Platforms not configured"), true);
 
   store.close();
 });

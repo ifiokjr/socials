@@ -1,4 +1,4 @@
-import type { Gist } from "../types.ts";
+import type { Gist, RecentGist } from "../types.ts";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -101,6 +101,28 @@ export class GistClient {
         f.filename.endsWith(".md") || f.filename.endsWith(".markdown")
       )
     );
+  }
+
+  /**
+   * Recent markdown gists in a UI-friendly format.
+   */
+  async listRecentPublishableGists(opts?: {
+    since?: string;
+    limit?: number;
+  }): Promise<RecentGist[]> {
+    const gists = await this.listPublishableGists({ since: opts?.since });
+    const limited = gists.slice(0, opts?.limit ?? 10);
+    return limited.map((gist) => ({
+      id: gist.id,
+      description: gist.description || "Untitled gist",
+      htmlUrl: gist.html_url,
+      updatedAt: gist.updated_at,
+      ownerLogin: gist.owner?.login,
+      publishedPlatforms: [],
+      markdownFiles: Object.values(gist.files)
+        .map((f) => f.filename)
+        .filter((name) => name.endsWith(".md") || name.endsWith(".markdown")),
+    }));
   }
 }
 

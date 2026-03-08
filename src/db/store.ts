@@ -1,5 +1,5 @@
 import type { EncryptedBlob } from "../auth/crypto.ts";
-import type { Platform, Publication } from "../types.ts";
+import type { Platform, Publication, RecentGist, UserPreferences } from "../types.ts";
 
 /**
  * Multi-tenant Deno KV store.
@@ -11,6 +11,7 @@ import type { Platform, Publication } from "../types.ts";
  *   ["pub_by_gist", userId, gistId]              →  pubId
  *   ["credentials", userId, platform]            →  EncryptedBlob
  *   ["storage_config", userId]                   →  EncryptedBlob  (S3-compat cfg)
+ *   ["preferences", userId]                      →  UserPreferences
  *   ["sessions", sessionId]                      →  Session        (see session.ts)
  */
 export class Store {
@@ -66,7 +67,49 @@ export class Store {
     return this.get(userId, ref.value);
   }
 
+  async getRecentGists(userId: string): Promise<RecentGist[]> {
+    const pubs = await this.getAll(userId);
+    const byGist = new Map<string, RecentGist>();
+
+    for (const pub of pubs) {
+      const publishedPlatforms = pub.platforms
+        .filter((p) => p.status === "published")
+        .map((p) => p.platform);
+
+      const existing = byGist.get(pub.gistId);
+      if (existing) {
+        const merged = new Set<Platform>([
+          ...existing.publishedPlatforms,
+          ...publishedPlatforms,
+        ]);
+        existing.publishedPlatforms = Array.from(merged);
+        continue;
+      }
+
+      byGist.set(pub.gistId, {
+        id: pub.gistId,
+        description: pub.content.meta.title || `Gist ${pub.gistId.slice(0, 8)}`,
+        htmlUrl: `https://gist.github.com/${pub.gistId}`,
+        updatedAt: pub.updatedAt,
+        publishedPlatforms: Array.from(new Set<Platform>(publishedPlatforms)),
+        ownerLogin: undefined,
+        markdownFiles: [],
+      });
+    }
+
+    return Array.from(byGist.values()).sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+  }
+
   async save(userId: string, publication: Publication): Promise<void> {
+    // Defense-in-depth: prevent cross-tenant data contamination
+    if (publication.userId && publication.userId !== userId) {
+      throw new Error(
+        "Security violation: publication userId does not match requesting userId",
+      );
+    }
+
     const existing = await this.kv.get<Publication>(
       ["publications", userId, publication.id],
     );
@@ -149,6 +192,17 @@ export class Store {
 
   async deleteStorageConfig(userId: string): Promise<void> {
     await this.kv.delete(["storage_config", userId]);
+  }
+
+  // ── User Preferences ───────────────────────────
+
+  async getPreferences(userId: string): Promise<UserPreferences | undefined> {
+    const r = await this.kv.get<UserPreferences>(["preferences", userId]);
+    return r.value ?? undefined;
+  }
+
+  async setPreferences(userId: string, preferences: UserPreferences): Promise<void> {
+    await this.kv.set(["preferences", userId], preferences);
   }
 
   // ── Lifecycle ──────────────────────────────────

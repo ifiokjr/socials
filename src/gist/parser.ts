@@ -56,11 +56,10 @@ function validateFrontmatter(data: Record<string, unknown>): GistFrontmatter {
     throw new GistParseError(`Frontmatter 'type' must be one of: ${[...VALID_TYPES].join(", ")}`);
   }
 
-  if (!Array.isArray(data.platforms) || data.platforms.length === 0) {
-    throw new GistParseError("Frontmatter must include a non-empty 'platforms' array");
-  }
+  // platforms may be empty/missing when the engine supplies defaults
+  const platforms: string[] = Array.isArray(data.platforms) ? data.platforms : [];
 
-  for (const p of data.platforms) {
+  for (const p of platforms) {
     if (typeof p !== "string" || !VALID_PLATFORMS.has(p)) {
       throw new GistParseError(
         `Invalid platform '${p}'. Must be one of: ${[...VALID_PLATFORMS].join(", ")}`,
@@ -71,7 +70,7 @@ function validateFrontmatter(data: Record<string, unknown>): GistFrontmatter {
   const result: GistFrontmatter = {
     title: data.title,
     type: data.type as GistFrontmatter["type"],
-    platforms: data.platforms as GistFrontmatter["platforms"],
+    platforms: platforms as GistFrontmatter["platforms"],
   };
 
   if (data.tags) {

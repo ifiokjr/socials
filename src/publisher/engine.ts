@@ -1,7 +1,7 @@
 import { GistClient } from "../gist/client.ts";
 import { parseGistContent } from "../gist/parser.ts";
 import { guessMimeType, S3Client } from "../storage/s3.ts";
-import { buildAdapter, ALL_PLATFORMS } from "../platforms/mod.ts";
+import { buildAdapter } from "../platforms/mod.ts";
 import { decrypt } from "../auth/crypto.ts";
 import { Store } from "../db/store.ts";
 import type { AppConfig } from "../config.ts";
@@ -35,7 +35,7 @@ export class PublishEngine {
   }
 
   /** Process a gist: parse → upload media → publish to platforms. */
-  async processGist(gistId: string): Promise<Publication> {
+  async processGist(gistId: string, opts?: { defaultPlatforms?: Platform[] }): Promise<Publication> {
     const existing = await this.#store.getByGistId(this.#userId, gistId);
     if (existing) return this.#republishFailed(existing);
 
@@ -49,6 +49,15 @@ export class PublishEngine {
     }
 
     const content = parseGistContent(mdFile.content);
+    const publishPlatforms = content.meta.platforms.length > 0
+      ? content.meta.platforms
+      : (opts?.defaultPlatforms ?? []);
+
+    if (publishPlatforms.length === 0) {
+      throw new Error("No publish platforms found in gist frontmatter and no default platforms configured");
+    }
+
+    content.meta.platforms = publishPlatforms;
 
     if (content.meta.draft) {
       const pub = this.#createPublication(gistId, content, []);

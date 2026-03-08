@@ -29,6 +29,7 @@ const api = {
 // ─── Types ───────────────────────────────────────
 
 interface User { id: string; login: string; name: string; avatarUrl: string; }
+interface UserPreferences { defaultPlatforms: string[]; }
 
 interface PlatformSetupField {
   key: string; label: string; type: "text" | "password" | "url";
@@ -49,6 +50,22 @@ interface Publication {
   id: string; gistId: string;
   content: { meta: { title: string; type: string; platforms: string[]; tags?: string[]; draft?: boolean; }; body: string; };
   platforms: PlatformPublication[]; createdAt: string; updatedAt: string;
+}
+
+interface RecentGistPlatformStatus {
+  platform: string;
+  status: "pending" | "publishing" | "published" | "failed" | "skipped";
+}
+
+interface RecentGist {
+  id: string;
+  description: string;
+  htmlUrl: string;
+  updatedAt: string;
+  publishedPlatforms?: string[];
+  platformStatuses?: RecentGistPlatformStatus[];
+  ownerLogin?: string;
+  markdownFiles?: string[];
 }
 
 // ─── DOM Helpers ─────────────────────────────────
@@ -74,6 +91,29 @@ function timeAgo(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function formatRecentGistPlatformStatus(gist: RecentGist): string {
+  if (!gist.platformStatuses || gist.platformStatuses.length === 0) {
+    return "";
+  }
+
+  const statusPriority: Record<RecentGistPlatformStatus["status"], number> = {
+    failed: 0,
+    publishing: 1,
+    pending: 2,
+    skipped: 3,
+    published: 4,
+  };
+
+  return gist.platformStatuses
+    .slice()
+    .sort((a, b) => {
+      const byStatus = statusPriority[a.status] - statusPriority[b.status];
+      return byStatus !== 0 ? byStatus : a.platform.localeCompare(b.platform);
+    })
+    .map((item) => `${item.platform}:${item.status}`)
+    .join(" | ");
 }
 
 // ─── Theme toggle ────────────────────────────────
@@ -116,11 +156,17 @@ function toggleTheme() {
 // ─── Auth + screens ──────────────────────────────
 
 let currentUser: User | null = null;
+let userDefaults: UserPreferences = { defaultPlatforms: [] };
 
 async function checkAuth(): Promise<void> {
   try {
-    currentUser = (await api.get<{ user: User | null }>("/me")).user;
-  } catch { currentUser = null; }
+    const me = await api.get<{ user: User | null; defaults: UserPreferences }>("/me");
+    currentUser = me.user;
+    userDefaults = me.defaults ?? { defaultPlatforms: [] };
+  } catch {
+    currentUser = null;
+    userDefaults = { defaultPlatforms: [] };
+  }
   hide($("#loading-screen"));
   if (currentUser) showDashboard(); else showLogin();
 }
@@ -153,7 +199,7 @@ function showDashboard() {
   const av = $("#user-avatar") as HTMLImageElement;
   av.src = currentUser!.avatarUrl; av.alt = currentUser!.name;
   $("#user-name").textContent = currentUser!.name;
-  loadPlatforms(); loadStorageStatus(); loadPublications();
+  loadPlatforms(); loadStorageStatus(); loadPublications(); loadRecentGists();
 }
 
 // ─── Platform grid ───────────────────────────────
@@ -314,6 +360,47 @@ function openStorageWizard(): void {
   });
 }
 
+// ─── Recent gists ───────────────────────────────
+
+async function loadRecentGists(): Promise<void> {
+  const input = $("#gist-id") as HTMLInputElement;
+  const select = $("#gist-select") as HTMLSelectElement;
+
+  try {
+    const { gists } = await api.get<{ gists: RecentGist[] }>("/gists/recent?limit=15");
+    if (gists.length === 0) {
+      select.innerHTML = `<option value="">No recent gists found</option>`;
+      input.placeholder = "Paste gist URL or ID";
+      return;
+    }
+
+    select.innerHTML = [
+      `<option value="">Select a recent gist…</option>`,
+      ...gists.map((gist) => {
+        const desc = gist.description?.trim() || "Untitled gist";
+        const platformStatusSummary = formatRecentGistPlatformStatus(gist);
+        const fallbackPublishedPlatforms = gist.publishedPlatforms ?? [];
+        const platformSummary = platformStatusSummary
+          ? ` · ${platformStatusSummary}`
+          : fallbackPublishedPlatforms.length > 0
+            ? ` · published: ${fallbackPublishedPlatforms.join(", ")}`
+            : "";
+        return `<option value="${gist.id}">${escapeHtml(desc)} · ${timeAgo(gist.updatedAt)}${escapeHtml(platformSummary)}</option>`;
+      }),
+    ].join("");
+
+    input.placeholder = "Paste gist URL or ID (optional when selecting above)";
+  } catch {
+    select.innerHTML = `<option value="">Failed to load recent gists</option>`;
+    input.placeholder = "Paste gist URL or ID";
+  }
+
+  select.addEventListener("change", () => {
+    if (!select.value) return;
+    input.value = select.value;
+  });
+}
+
 // ─── Publications ────────────────────────────────
 
 async function loadPublications(): Promise<void> {
@@ -326,7 +413,7 @@ async function loadPublications(): Promise<void> {
 function renderPublications(pubs: Publication[]): void {
   const container = $("#publications-list");
   if (pubs.length === 0) {
-    container.innerHTML = `<p class="text-sm text-surface-500 text-center py-10 italic">No publications yet. Paste a Gist ID above to get started.</p>`;
+    container.innerHTML = `<p class="text-sm text-surface-500 text-center py-10 italic">No publications yet. Select a recent gist above (or paste one manually) to get started.</p>`;
     return;
   }
   container.innerHTML = `<div class="space-y-3">${pubs.map(pub => `
@@ -372,9 +459,15 @@ document.addEventListener("DOMContentLoaded", () => {
   // Publish form
   const form = $("#publish-form") as HTMLFormElement;
   const resultEl = $("#publish-result");
+  const gistInput = $("#gist-id") as HTMLInputElement;
+  gistInput.placeholder = userDefaults.defaultPlatforms.length > 0
+    ? `${gistInput.placeholder} (defaults: ${userDefaults.defaultPlatforms.join(", ")})`
+    : gistInput.placeholder;
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const gistId = extractGistId(($("#gist-id") as HTMLInputElement).value);
+    const gistIdRaw = ($("#gist-id") as HTMLInputElement).value;
+    const gistId = extractGistId(gistIdRaw);
     const btn = $("#publish-btn") as HTMLButtonElement;
     btn.disabled = true; btn.textContent = "Publishing…"; resultEl.hidden = true;
     try {

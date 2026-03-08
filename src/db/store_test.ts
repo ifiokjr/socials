@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { Store } from "./store.ts";
-import type { Publication } from "../types.ts";
+import type { Publication, UserPreferences } from "../types.ts";
 
 const USER = "user-1";
 
@@ -167,6 +167,21 @@ Deno.test("Store - user profile CRUD", async () => {
   const found = await store.getUser(USER);
   assertEquals(found?.login, "testuser");
   assertEquals(found?.githubId, 12345);
+
+  store.close();
+});
+
+Deno.test("Store - preferences CRUD", async () => {
+  const store = await tempStore();
+
+  assertEquals(await store.getPreferences(USER), undefined);
+
+  const preferences: UserPreferences = {
+    defaultPlatforms: ["twitter", "bluesky"],
+  };
+
+  await store.setPreferences(USER, preferences);
+  assertEquals(await store.getPreferences(USER), preferences);
 
   store.close();
 });

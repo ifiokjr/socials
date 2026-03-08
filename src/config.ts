@@ -6,6 +6,9 @@ import "@std/dotenv/load";
  * Per-user platform credentials are stored encrypted in Deno KV,
  * NOT in env vars.
  */
+import { parseDefaultPlatforms } from "./platforms/setup.ts";
+import type { Platform } from "./types.ts";
+
 export interface AppConfig {
   server: {
     port: number;
@@ -23,6 +26,10 @@ export interface AppConfig {
   };
   /** Secret used to derive AES keys for encrypting user credentials in KV. */
   encryptionSecret: string;
+  defaults: {
+    /** Default platforms preselected for each user when publishing. */
+    publishPlatforms: Platform[];
+  };
 }
 
 function env(key: string, fallback = ""): string {
@@ -35,6 +42,22 @@ export function loadConfig(): AppConfig {
   const isProd = env("DENO_DEPLOYMENT_ID") !== "" || env("CI") !== "";
   const baseUrl = env("BASE_URL", `http://localhost:${port}`);
 
+  const encryptionSecret = env("ENCRYPTION_SECRET");
+
+  if (isProd && !encryptionSecret) {
+    throw new Error(
+      "ENCRYPTION_SECRET must be set in production. " +
+        "Generate one with: openssl rand -base64 32",
+    );
+  }
+
+  if (!isProd && !encryptionSecret) {
+    console.warn(
+      "⚠️  ENCRYPTION_SECRET not set — using default dev secret. " +
+        "Set it in .env before deploying.",
+    );
+  }
+
   return {
     server: {
       port,
@@ -46,6 +69,9 @@ export function loadConfig(): AppConfig {
       clientId: env("GITHUB_CLIENT_ID"),
       clientSecret: env("GITHUB_CLIENT_SECRET"),
     },
-    encryptionSecret: env("ENCRYPTION_SECRET", "dev-secret-change-me-in-production"),
+    encryptionSecret: encryptionSecret || "dev-secret-change-me-in-production",
+    defaults: {
+      publishPlatforms: parseDefaultPlatforms(env("DEFAULT_PUBLISH_PLATFORMS")),
+    },
   };
 }
