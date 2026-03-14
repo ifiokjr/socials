@@ -1,5 +1,11 @@
 import type { EncryptedBlob } from "../auth/crypto.ts";
-import type { Platform, Publication, RecentGist, UserPreferences } from "../types.ts";
+import type {
+  Platform,
+  Publication,
+  RecentGist,
+  StoredPushSubscription,
+  UserPreferences,
+} from "../types.ts";
 
 /**
  * Multi-tenant Deno KV store.
@@ -12,6 +18,7 @@ import type { Platform, Publication, RecentGist, UserPreferences } from "../type
  *   ["credentials", userId, platform]            →  EncryptedBlob
  *   ["storage_config", userId]                   →  EncryptedBlob  (S3-compat cfg)
  *   ["preferences", userId]                      →  UserPreferences
+ *   ["push_subscriptions", userId, endpoint]     →  StoredPushSubscription
  *   ["sessions", sessionId]                      →  Session        (see session.ts)
  */
 export class Store {
@@ -203,6 +210,54 @@ export class Store {
 
   async setPreferences(userId: string, preferences: UserPreferences): Promise<void> {
     await this.kv.set(["preferences", userId], preferences);
+  }
+
+  // ── Push Subscriptions ─────────────────────────
+
+  async savePushSubscription(
+    userId: string,
+    subscription: Omit<StoredPushSubscription, "createdAt" | "updatedAt">,
+  ): Promise<StoredPushSubscription> {
+    const now = new Date().toISOString();
+    const key = ["push_subscriptions", userId, subscription.endpoint] as const;
+    const existing = await this.kv.get<StoredPushSubscription>(key);
+
+    const next: StoredPushSubscription = {
+      endpoint: subscription.endpoint,
+      expirationTime: subscription.expirationTime,
+      keys: subscription.keys,
+      createdAt: existing.value?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    await this.kv.set(key, next);
+    return next;
+  }
+
+  async listPushSubscriptions(userId: string): Promise<StoredPushSubscription[]> {
+    const subscriptions: StoredPushSubscription[] = [];
+    const iter = this.kv.list<StoredPushSubscription>({
+      prefix: ["push_subscriptions", userId],
+    });
+
+    for await (const entry of iter) {
+      subscriptions.push(entry.value);
+    }
+
+    subscriptions.sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+
+    return subscriptions;
+  }
+
+  async removePushSubscription(userId: string, endpoint: string): Promise<boolean> {
+    const key = ["push_subscriptions", userId, endpoint] as const;
+    const existing = await this.kv.get<StoredPushSubscription>(key);
+    if (!existing.value) return false;
+
+    await this.kv.delete(key);
+    return true;
   }
 
   // ── Lifecycle ──────────────────────────────────

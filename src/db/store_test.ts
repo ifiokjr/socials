@@ -185,3 +185,29 @@ Deno.test("Store - preferences CRUD", async () => {
 
   store.close();
 });
+
+Deno.test("Store - push subscription CRUD", async () => {
+  const store = await tempStore();
+
+  const saved = await store.savePushSubscription(USER, {
+    endpoint: "https://example.push/sub/abc",
+    expirationTime: null,
+    keys: {
+      p256dh: "key-p256dh",
+      auth: "key-auth",
+    },
+  });
+
+  assertEquals(saved.endpoint, "https://example.push/sub/abc");
+  assertEquals(saved.keys.auth, "key-auth");
+
+  const listed = await store.listPushSubscriptions(USER);
+  assertEquals(listed.length, 1);
+  assertEquals(listed[0].endpoint, "https://example.push/sub/abc");
+
+  const removed = await store.removePushSubscription(USER, "https://example.push/sub/abc");
+  assertEquals(removed, true);
+  assertEquals((await store.listPushSubscriptions(USER)).length, 0);
+
+  store.close();
+});

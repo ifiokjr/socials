@@ -38,13 +38,23 @@
 }
 
 @keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slide-up {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Dark mode as default, light mode via class ── */
@@ -107,4 +117,111 @@
 
 @utility badge {
   @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+}
+
+.pwa-cta-card {
+  @apply rounded-xl border px-4 py-3 transition-colors duration-300;
+  @apply border-surface-800 bg-surface-900/65 backdrop-blur-sm;
+}
+
+.light .pwa-cta-card {
+  @apply border-surface-200 bg-white/85 shadow-sm;
+}
+
+.pwa-cta-title {
+  @apply text-sm font-semibold text-surface-100;
+}
+
+.light .pwa-cta-title {
+  @apply text-surface-800;
+}
+
+.pwa-cta-copy {
+  @apply text-xs leading-relaxed text-surface-400;
+}
+
+.light .pwa-cta-copy {
+  @apply text-surface-600;
+}
+
+.pwa-cta-actions {
+  @apply mt-3 flex flex-wrap items-center gap-2;
+}
+
+.pwa-install-prompt {
+  @apply rounded-lg border border-caution/35 bg-caution/10 px-4 py-3;
+}
+
+.pwa-install-state {
+  @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium;
+  @apply border-surface-700 bg-surface-900/70 text-surface-300;
+}
+
+.light .pwa-install-state {
+  @apply border-surface-300 bg-surface-100 text-surface-700;
+}
+
+.pwa-install-state.is-ready {
+  @apply border-accent/40 bg-accent/10 text-accent;
+}
+
+.pwa-install-state.is-installed {
+  @apply border-positive/40 bg-positive/10 text-positive;
+}
+
+.pwa-install-state.is-error {
+  @apply border-negative/40 bg-negative/10 text-negative;
+}
+
+.notification-soft-ask {
+  @apply rounded-lg border border-accent/35 bg-accent/10 px-4 py-3;
+}
+
+.notification-steps {
+  @apply space-y-1.5 text-xs;
+}
+
+.notification-steps li {
+  @apply rounded-md border border-surface-800 bg-surface-900/40 px-3 py-2 text-surface-500;
+}
+
+.light .notification-steps li {
+  @apply border-surface-300 bg-surface-100/70;
+}
+
+.notification-steps li.is-active {
+  @apply border-accent/40 text-surface-200;
+}
+
+.light .notification-steps li.is-active {
+  @apply text-surface-700;
+}
+
+.notification-steps li.is-done {
+  @apply border-positive/40 bg-positive/10 text-positive;
+}
+
+.notification-steps li.is-error {
+  @apply border-negative/40 bg-negative/10 text-negative;
+}
+
+.notification-status-chip {
+  @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium;
+  @apply border-surface-700 bg-surface-900/70 text-surface-300;
+}
+
+.light .notification-status-chip {
+  @apply border-surface-300 bg-surface-100 text-surface-700;
+}
+
+.notification-status-chip.is-subscribed {
+  @apply border-positive/40 bg-positive/10 text-positive;
+}
+
+.notification-status-chip.is-pending {
+  @apply border-caution/40 bg-caution/10 text-caution;
+}
+
+.notification-status-chip.is-error {
+  @apply border-negative/40 bg-negative/10 text-negative;
 }

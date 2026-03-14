@@ -41,7 +41,7 @@ export class GistClient {
   }
 
   /** List authenticated user's gists */
-  async list(opts?: { perPage?: number; page?: number; since?: string }): Promise<Gist[]> {
+  list(opts?: { perPage?: number; page?: number; since?: string }): Promise<Gist[]> {
     const params = new URLSearchParams();
     if (opts?.perPage) params.set("per_page", String(opts.perPage));
     if (opts?.page) params.set("page", String(opts.page));
@@ -52,12 +52,12 @@ export class GistClient {
   }
 
   /** Get a single gist by ID (includes file content) */
-  async get(gistId: string): Promise<Gist> {
+  get(gistId: string): Promise<Gist> {
     return this.#request<Gist>(`/gists/${gistId}`);
   }
 
   /** Create a new gist */
-  async create(opts: {
+  create(opts: {
     description: string;
     public: boolean;
     files: Record<string, { content: string }>;
@@ -69,7 +69,7 @@ export class GistClient {
   }
 
   /** Update a gist */
-  async update(gistId: string, opts: {
+  update(gistId: string, opts: {
     description?: string;
     files?: Record<string, { content: string } | null>;
   }): Promise<Gist> {

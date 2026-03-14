@@ -232,6 +232,27 @@ export interface PlatformSetupField {
   helpUrl?: string;
 }
 
+export interface PushSubscriptionKeys {
+  p256dh?: string;
+  auth?: string;
+}
+
+/** Web push subscription persisted per user endpoint. */
+export interface StoredPushSubscription {
+  endpoint: string;
+  expirationTime: number | null;
+  keys: PushSubscriptionKeys;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PushTestPayload {
+  title?: string;
+  body?: string;
+  url?: string;
+  tag?: string;
+}
+
 /** Per-user preferences stored in KV. */
 export interface UserPreferences {
   defaultPlatforms: Platform[];

@@ -2,7 +2,6 @@ import { PlatformAdapter } from "./base.ts";
 import { stripMarkdown, truncateText } from "../gist/parser.ts";
 import type { TwitterCredentials } from "../types.ts";
 import type { MediaRef, ParsedContent, PublishResult } from "../types.ts";
-import { encodeHex } from "@std/encoding/hex";
 
 /**
  * X (Twitter) API v2 adapter.

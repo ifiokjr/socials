@@ -8,6 +8,11 @@ function testConfig(): AppConfig {
   return {
     server: { port: 0, host: "127.0.0.1", baseUrl: "http://localhost:0", isProduction: false },
     github: { clientId: "test-id", clientSecret: "test-secret" },
+    push: {
+      vapidPublicKey: "",
+      vapidPrivateKey: "",
+      vapidSubject: "",
+    },
     encryptionSecret: "test-encryption-secret-for-unit-tests",
     defaults: {
       publishPlatforms: ["twitter"],
@@ -53,6 +58,22 @@ Deno.test("GET /api/me returns null user and app defaults without session", asyn
   const body = await res.json();
   assertEquals(body.user, null);
   assertEquals(body.defaults.defaultPlatforms, ["twitter"]);
+  store.close();
+});
+
+Deno.test("GET /api/me returns user defaults when preferences exist", async () => {
+  const { app, store } = await setup();
+  const { cookie, userId } = await withSession(store);
+
+  await store.setPreferences(userId, { defaultPlatforms: ["bluesky"] });
+
+  const res = await app.request("/api/me", {
+    headers: { Cookie: cookie },
+  });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.defaults.defaultPlatforms, ["bluesky"]);
+
   store.close();
 });
 
@@ -314,6 +335,96 @@ Deno.test("PUT /api/preferences rejects unconfigured platforms", async () => {
   });
   assertEquals(res.status, 400);
   assertEquals((await res.json()).error.includes("Platforms not configured"), true);
+
+  store.close();
+});
+
+Deno.test("GET /api/push/public-key returns 503 when not configured", async () => {
+  const { app, store } = await setup();
+  const { cookie } = await withSession(store);
+
+  const res = await app.request("/api/push/public-key", {
+    headers: { Cookie: cookie },
+  });
+  assertEquals(res.status, 503);
+
+  store.close();
+});
+
+Deno.test("Push subscription endpoints save and remove subscription", async () => {
+  const { app, store } = await setup();
+  const { cookie, userId } = await withSession(store);
+
+  const subscribeRes = await app.request("/api/push/subscribe", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      endpoint: "https://example.push/sub/123",
+      expirationTime: null,
+      keys: {
+        p256dh: "test-p256dh",
+        auth: "test-auth",
+      },
+    }),
+  });
+  assertEquals(subscribeRes.status, 200);
+
+  const subscriptions = await store.listPushSubscriptions(userId);
+  assertEquals(subscriptions.length, 1);
+  assertEquals(subscriptions[0].endpoint, "https://example.push/sub/123");
+
+  const unsubscribeRes = await app.request("/api/push/unsubscribe", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: "https://example.push/sub/123" }),
+  });
+  assertEquals(unsubscribeRes.status, 200);
+
+  const after = await store.listPushSubscriptions(userId);
+  assertEquals(after.length, 0);
+
+  store.close();
+});
+
+Deno.test("Push subscribe rejects invalid endpoint and keys", async () => {
+  const { app, store } = await setup();
+  const { cookie } = await withSession(store);
+
+  const invalidEndpoint = await app.request("/api/push/subscribe", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      endpoint: "http://insecure.example/sub",
+      expirationTime: null,
+      keys: { p256dh: "test-p256dh", auth: "test-auth" },
+    }),
+  });
+  assertEquals(invalidEndpoint.status, 400);
+
+  const invalidKeys = await app.request("/api/push/subscribe", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      endpoint: "https://example.push/sub/234",
+      expirationTime: null,
+      keys: { p256dh: "***", auth: "***" },
+    }),
+  });
+  assertEquals(invalidKeys.status, 400);
+
+  store.close();
+});
+
+Deno.test("POST /api/push/test returns 503 when push is not configured", async () => {
+  const { app, store } = await setup();
+  const { cookie } = await withSession(store);
+
+  const res = await app.request("/api/push/test", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "hello" }),
+  });
+  assertEquals(res.status, 503);
 
   store.close();
 });

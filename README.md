@@ -126,6 +126,223 @@ deno task test:e2e:install   # first time only
 deno task test:e2e
 ```
 
+## Browser Notifications (Web Push) — Exact Setup Steps
+
+> Status note: this section documents the full implementation flow (client + service worker + server) so you can add or verify browser notifications end-to-end.
+
+### 1) Generate VAPID keys (once per environment)
+
+Use `web-push` (or any VAPID-compatible tool) to generate your key pair:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Example output:
+
+```text
+Public Key:
+BEl...yourPublicKey...xyz
+
+Private Key:
+9mA...yourPrivateKey...abc
+```
+
+Save both keys securely.
+
+### 2) Configure environment variables
+
+Add these to your `.env` (or deploy secret manager):
+
+```env
+# Web Push (VAPID)
+VAPID_PUBLIC_KEY=your_public_key
+VAPID_PRIVATE_KEY=your_private_key
+VAPID_SUBJECT=mailto:you@yourdomain.com
+```
+
+Guidance:
+- `VAPID_SUBJECT` should be a monitored email or a contact URL.
+- Use different keys for local/dev vs production.
+- Never expose `VAPID_PRIVATE_KEY` in frontend code.
+
+### 3) Register a service worker in the browser
+
+In your frontend bootstrap (`web/app.ts`), register the service worker after app startup:
+
+```ts
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js", {
+        scope: "/",
+      });
+      console.log("SW registered", registration.scope);
+    } catch (error) {
+      console.error("SW registration failed", error);
+    }
+  });
+}
+```
+
+Create `web/sw.js` (or equivalent build output) with push handlers:
+
+```js
+self.addEventListener("push", (event) => {
+  const payload = event.data?.json?.() ?? {
+    title: "Socials",
+    body: "You have a new update.",
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title ?? "Socials", {
+      body: payload.body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/badge-72.png",
+      data: payload.url ? { url: payload.url } : undefined,
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/";
+  event.waitUntil(clients.openWindow(url));
+});
+```
+
+### 4) Request permission and subscribe user
+
+Best practice: ask only after user intent (not on first paint). For example, after successful login or first publish.
+
+```ts
+async function subscribeToPush(registration: ServiceWorkerRegistration) {
+  if (!("Notification" in window) || !("PushManager" in window)) {
+    throw new Error("Push notifications are not supported in this browser.");
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error(`Permission not granted: ${permission}`);
+  }
+
+  const vapidPublicKey = "<from /api/push/public-key or injected config>";
+  const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey);
+
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey,
+  });
+
+  await fetch("/api/push/subscribe", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(subscription),
+  });
+
+  return subscription;
+}
+```
+
+Helper:
+
+```ts
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+```
+
+### 5) Trigger/send a notification (server)
+
+Server flow:
+1. Store subscriptions per user (`endpoint`, `keys.p256dh`, `keys.auth`).
+2. When an event happens (e.g., publication success/failure), load subscriptions.
+3. Send push payload with your VAPID private key.
+4. Remove expired subscriptions (`410 Gone`).
+
+Example (Node-style with `web-push`; adapt to Deno runtime as needed):
+
+```ts
+import webpush from "web-push";
+
+webpush.setVapidDetails(
+  process.env.VAPID_SUBJECT!,
+  process.env.VAPID_PUBLIC_KEY!,
+  process.env.VAPID_PRIVATE_KEY!,
+);
+
+await webpush.sendNotification(subscription, JSON.stringify({
+  title: "✅ Publish complete",
+  body: "Your post was published to X, LinkedIn, and Mastodon.",
+  url: "/publications",
+}));
+```
+
+### 6) Unsubscribe flow
+
+Allow users to disable notifications in-app:
+
+```ts
+const registration = await navigator.serviceWorker.ready;
+const sub = await registration.pushManager.getSubscription();
+if (sub) {
+  await fetch("/api/push/unsubscribe", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endpoint: sub.endpoint }),
+  });
+  await sub.unsubscribe();
+}
+```
+
+Also document browser-level fallback:
+- Users can revoke permission in site settings (lock icon → Notifications).
+- Your backend should gracefully handle stale subscriptions.
+
+### 7) Local verification checklist
+
+1. Start app and verify SW registration in DevTools → Application → Service Workers.
+2. Confirm permission becomes `granted` after user action.
+3. Confirm subscription appears in backend storage.
+4. Trigger a test notification from server.
+5. Verify notification click opens expected URL.
+6. Unsubscribe and confirm no further pushes are delivered.
+
+### 8) Troubleshooting
+
+- **`Notification.permission = denied`**
+  - User previously blocked notifications. Re-enable in browser site settings.
+- **`subscribe()` fails with `InvalidStateError`**
+  - SW may not be active yet; wait for `navigator.serviceWorker.ready`.
+- **No push received but subscription exists**
+  - Check VAPID keys match between client public key and server private/public pair.
+  - Check payload format and service worker `push` handler.
+- **Works locally, fails in production**
+  - Ensure HTTPS is enabled (required for Push API, except localhost).
+  - Verify reverse proxy/CDN is not caching old `sw.js` forever.
+- **Got `410 Gone` from push provider**
+  - Subscription expired/invalid. Delete it from your DB and request re-subscription.
+
+### 9) Recommended prompt copy + timing guidance
+
+Use a soft pre-prompt before the native browser permission dialog.
+
+Recommended copy:
+
+- **Title:** `Stay in the loop?`
+- **Body:** `Get notified when your posts finish publishing or need attention. No spam — only important account activity.`
+- **Primary CTA:** `Enable notifications`
+- **Secondary CTA:** `Not now`
+
+Timing guidance:
+- ✅ Ask after a meaningful action (first successful publish, platform connection, or when user opens Publications page).
+- ✅ Delay prompt until user is authenticated and understands value.
+- ✅ If dismissed, wait before re-prompting (e.g., 7–14 days).
+- ❌ Do not trigger browser permission request immediately on first visit.
+
 ## Deploy to Deno Deploy
 
 ### 1. Create the repo
