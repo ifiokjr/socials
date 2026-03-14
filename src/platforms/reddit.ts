@@ -1,5 +1,4 @@
 import { PlatformAdapter } from "./base.ts";
-import { stripMarkdown } from "../gist/parser.ts";
 import type { RedditCredentials } from "../types.ts";
 import type { MediaRef, ParsedContent, PublishResult } from "../types.ts";
 

@@ -4,7 +4,6 @@ import { guessMimeType, S3Client } from "../storage/s3.ts";
 import { buildAdapter } from "../platforms/mod.ts";
 import { decrypt } from "../auth/crypto.ts";
 import { Store } from "../db/store.ts";
-import type { AppConfig } from "../config.ts";
 import type {
   MediaRef,
   Platform,
